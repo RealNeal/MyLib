@@ -4,6 +4,33 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="http" />
+        </intent>
+        <package android:name="ru.anixart" />
+        <package android:name="org.anixart" />
+        <package android:name="com.anixart" />
+        <package android:name="ru.kinopoisk" />
+        <package android:name="com.imdb.mobile" />
+        <package android:name="org.remanga" />
+        <package android:name="org.shikimori" />
+        <package android:name="com.github.k1rakishou.shikimori" />
+        <package android:name="net.myanimelist.app" />
+        <package android:name="com.scribblehub.app" />
+        <package android:name="com.royalroad.app" />
+        <package android:name="me.mangalib" />
+        <package android:name="com.libsocial" />
+        <package android:name="com.google.android.youtube" />
+    </queries>
+
     <application
         android:name=".MyLibraryApp"
         android:allowBackup="true"

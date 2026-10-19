@@ -2,9 +2,18 @@ package com.rn.library.ui.screens
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ScrollState
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.horizontalDrag
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
@@ -12,7 +21,6 @@ import kotlin.math.roundToInt
 import android.content.res.Configuration
 import android.net.Uri
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -33,6 +41,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
@@ -40,9 +49,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import com.rn.library.ui.components.ChipsFlowRow
 import com.rn.library.ui.components.SunIcon
 import com.rn.library.ui.components.bottomNavigationClearance
 import androidx.compose.material3.*
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.runtime.*
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.draw.clip
@@ -56,6 +67,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import com.rn.library.ui.components.SearchBar
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
@@ -70,6 +83,7 @@ import java.io.File
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.rn.library.ui.AppSettings
 import com.rn.library.ui.components.CoverCarousel
 import com.rn.library.ui.components.ScrollIsolatedMultilineField
@@ -115,6 +129,8 @@ fun WorkDetailScreen(
     allWorks: List<Work> = emptyList(),
     onSelectWork: ((Work) -> Unit)? = null,
     onScrollStateChange: ((Boolean) -> Unit)? = null,
+    onGenreClick: ((String) -> Unit)? = null,
+    onTagClick: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val mainBackgroundColor = MainBackgroundColor()
@@ -161,9 +177,11 @@ fun WorkDetailScreen(
     val scrollState = remember(work.id) { ScrollState(initial = 0) }
     val coroutineScope = rememberCoroutineScope()
     val offsetX = remember(work.id) { Animatable(0f) }
+    val offsetY = remember(work.id) { Animatable(0f) }
 
     LaunchedEffect(work.id) {
         offsetX.snapTo(0f)
+        offsetY.snapTo(0f)
         scrollState.scrollTo(0)
     }
     val context = LocalContext.current
@@ -189,7 +207,7 @@ fun WorkDetailScreen(
         work.otherTitle
             ?.split(";", "\n")
             ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
+            ?.filter { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
             ?: emptyList()
     }
     var otherTitlesExpanded by remember { mutableStateOf(false) }
@@ -209,6 +227,8 @@ fun WorkDetailScreen(
     }
     // Состояния для редактирования информации
     var showEditInfoDialog by remember { mutableStateOf(false) }
+    var showEditLinksDialog by remember { mutableStateOf(false) }
+    var linksEditText by remember { mutableStateOf("") }
     var editInfoParts by remember { mutableStateOf<List<EditInfoItem>>(emptyList()) }
     var temporaryWork by remember { mutableStateOf(work) }
 
@@ -225,7 +245,7 @@ fun WorkDetailScreen(
     androidx.activity.compose.BackHandler(
         enabled = !detailSearchExpanded && !otherTitlesExpanded &&
             !statusMenuExpanded && !seriesTypeMenuExpanded && !mangaTypeMenuExpanded &&
-            !showEditInfoDialog
+            !showEditInfoDialog && !showEditLinksDialog
     ) {
         onBack()
     }
@@ -408,7 +428,7 @@ fun WorkDetailScreen(
                 },
                 // Как в AddWorkScreen: храним только цифры DDMMYYYY, чтобы применить визуальную маску
                 value = work.dateRead?.split("-")?.let { parts ->
-                    if (parts.size == 3) parts[2] + parts[1] + parts[0] else work.dateRead.filter { c -> c.isDigit() }
+                    if (parts.size == 3) parts[2].padStart(2, '0') + parts[1].padStart(2, '0') + parts[0] else work.dateRead.filter { c -> c.isDigit() }
                 }.orEmpty(),
                 type = EditInfoType.DATE,
                 originalValue = work.dateRead
@@ -430,16 +450,6 @@ fun WorkDetailScreen(
 
         items.add(
             EditInfoItem(
-                key = "author",
-                label = stringResource(R.string.author),
-                value = work.author.orEmpty(),
-                type = EditInfoType.STRING,
-                originalValue = work.author
-            )
-        )
-
-        items.add(
-            EditInfoItem(
                 key = "note",
                 label = stringResource(R.string.note_label),
                 value = work.note.orEmpty(),
@@ -456,61 +466,124 @@ fun WorkDetailScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .offset { IntOffset(offsetX.value.roundToInt().coerceAtLeast(0), 0) }
+            .offset {
+                IntOffset(
+                    offsetX.value.roundToInt().coerceAtLeast(0),
+                    offsetY.value.roundToInt().coerceAtLeast(0)
+                )
+            }
             .pointerInput(work.id) {
-                var dragStartTime = 0L
-                var totalDragDistance = 0f
-                detectHorizontalDragGestures(
-                    onDragStart = {
-                        dragStartTime = System.currentTimeMillis()
-                        totalDragDistance = 0f
-                    },
-                    onHorizontalDrag = { change, dragAmount ->
-                        totalDragDistance += dragAmount
-                        if (dragAmount > 0 || offsetX.value > 0f) {
+                val touchSlop = viewConfiguration.touchSlop
+                awaitEachGesture {
+                    val down = awaitFirstDown(pass = PointerEventPass.Initial)
+                    var swipeDirection = 0 // 0 = undefined, 1 = horizontal (right), 2 = vertical (down)
+                    var totalX = 0f
+                    var totalY = 0f
+                    val dragStartTime = System.currentTimeMillis()
+                    val activationSlop = touchSlop * 1.8f
+
+                    do {
+                        val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) break
+
+                        val delta = change.positionChange()
+                        totalX += delta.x
+                        totalY += delta.y
+
+                        if (swipeDirection == 0) {
+                            val absX = kotlin.math.abs(totalX)
+                            val absY = kotlin.math.abs(totalY)
+
+                            val isHorizontalRight = totalX > activationSlop && totalX > absY * 1.6f
+                            val isVerticalDown = scrollState.value == 0 && totalY > activationSlop && totalY > absX * 1.6f
+
+                            if (isHorizontalRight) {
+                                swipeDirection = 1
+                                change.consume()
+                                coroutineScope.launch {
+                                    offsetX.snapTo((totalX - activationSlop).coerceIn(0f, size.width.toFloat()))
+                                }
+                            } else if (isVerticalDown) {
+                                swipeDirection = 2
+                                change.consume()
+                                coroutineScope.launch {
+                                    offsetY.snapTo((totalY - activationSlop).coerceIn(0f, size.height.toFloat()))
+                                }
+                            } else if (totalX < -touchSlop || (scrollState.value > 0 && absY > touchSlop) || totalY < -touchSlop) {
+                                break
+                            }
+                        } else if (swipeDirection == 1) {
                             change.consume()
                             coroutineScope.launch {
-                                offsetX.snapTo((offsetX.value + dragAmount).coerceAtLeast(0f))
+                                offsetX.snapTo((totalX - activationSlop).coerceIn(0f, size.width.toFloat()))
+                            }
+                        } else if (swipeDirection == 2) {
+                            change.consume()
+                            coroutineScope.launch {
+                                offsetY.snapTo((totalY - activationSlop).coerceIn(0f, size.height.toFloat()))
                             }
                         }
-                    },
-                    onDragEnd = {
-                        val elapsed = (System.currentTimeMillis() - dragStartTime).coerceAtLeast(1L)
-                        val velocityPxPerSec = (totalDragDistance / elapsed) * 1000f
-                        val isFling = velocityPxPerSec > 1200f && totalDragDistance > 60f
-                        val isDraggedFar = offsetX.value > size.width * 0.28f
+                    } while (event.changes.any { it.pressed })
+
+                    val elapsed = (System.currentTimeMillis() - dragStartTime).coerceAtLeast(1L)
+                    val smoothDismissSpec = tween<Float>(
+                        durationMillis = 320,
+                        easing = CubicBezierEasing(0.2f, 0.0f, 0.0f, 1.0f)
+                    )
+                    val smoothCancelSpec = spring<Float>(
+                        dampingRatio = 0.85f,
+                        stiffness = Spring.StiffnessMediumLow
+                    )
+
+                    if (swipeDirection == 1) {
+                        val velocityPxPerSec = (totalX / elapsed) * 1000f
+                        val isFling = velocityPxPerSec > 1350f && totalX > size.width * 0.35f
+                        val isDraggedFar = totalX > size.width * 0.52f || offsetX.value > size.width * 0.52f
                         coroutineScope.launch {
                             if (isDraggedFar || isFling) {
                                 offsetX.animateTo(
                                     targetValue = size.width.toFloat(),
-                                    animationSpec = tween(150, easing = FastOutSlowInEasing)
+                                    animationSpec = smoothDismissSpec
                                 )
                                 onBack()
                             } else {
                                 offsetX.animateTo(
                                     targetValue = 0f,
-                                    animationSpec = tween(150, easing = FastOutSlowInEasing)
+                                    animationSpec = smoothCancelSpec
                                 )
                             }
                         }
-                    },
-                    onDragCancel = {
+                    } else if (swipeDirection == 2) {
+                        val velocityPxPerSec = (totalY / elapsed) * 1000f
+                        val isFling = velocityPxPerSec > 1350f && totalY > size.height * 0.28f
+                        val isDraggedFar = totalY > size.height * 0.42f || offsetY.value > size.height * 0.42f
                         coroutineScope.launch {
-                            offsetX.animateTo(
-                                targetValue = 0f,
-                                animationSpec = tween(150, easing = FastOutSlowInEasing)
-                            )
+                            if (isDraggedFar || isFling) {
+                                offsetY.animateTo(
+                                    targetValue = size.height.toFloat(),
+                                    animationSpec = smoothDismissSpec
+                                )
+                                onBack()
+                            } else {
+                                offsetY.animateTo(
+                                    targetValue = 0f,
+                                    animationSpec = smoothCancelSpec
+                                )
+                            }
                         }
                     }
-                )
+                }
             }
             .graphicsLayer {
-                shadowElevation = if (offsetX.value > 0f) 24.dp.toPx() else 0f
+                val isSwiping = offsetX.value > 0f || offsetY.value > 0f
+                shadowElevation = if (isSwiping) 24.dp.toPx() else 0f
                 shape = RoundedCornerShape(
-                    topStart = if (offsetX.value > 0f) 16.dp else 0.dp,
-                    bottomStart = if (offsetX.value > 0f) 16.dp else 0.dp
+                    topStart = if (offsetX.value > 0f || offsetY.value > 0f) 16.dp else 0.dp,
+                    bottomStart = if (offsetX.value > 0f) 16.dp else 0.dp,
+                    topEnd = if (offsetY.value > 0f) 16.dp else 0.dp
                 )
-                clip = offsetX.value > 0f
+                clip = isSwiping
             }
             .background(mainBackgroundColor)
             .clickable(
@@ -580,134 +653,57 @@ fun WorkDetailScreen(
                     )
                 }
 
-                if (detailSearchExpanded) {
-                    OutlinedTextField(
-                        value = detailSearchQuery,
-                        onValueChange = { detailSearchQuery = it },
-                        placeholder = { Text(stringResource(R.string.search_by_work_titles)) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 8.dp),
-                        singleLine = true,
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = searchBarColor,
-                            unfocusedContainerColor = searchBarColor,
-                            focusedTextColor = fieldTextColor,
-                            unfocusedTextColor = fieldTextColor
-                        )
-                    )
-                    IconButton(onClick = {
-                        detailSearchExpanded = false
-                        detailSearchQuery = ""
-                    }) {
+                Spacer(modifier = Modifier.weight(1f))
+
+                if (allWorks.isNotEmpty()) {
+                    IconButton(onClick = { detailSearchExpanded = true }) {
                         Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = null,
+                            imageVector = Icons.Default.Search,
+                            contentDescription = stringResource(R.string.search),
                             tint = iconTextColor
                         )
                     }
-                } else {
-                    Spacer(modifier = Modifier.weight(1f))
+                }
 
-                    if (allWorks.isNotEmpty()) {
-                        IconButton(onClick = { detailSearchExpanded = true }) {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = stringResource(R.string.search),
-                                tint = iconTextColor
-                            )
-                        }
-                    }
+                Spacer(modifier = Modifier.weight(1f))
 
-                    if (onThemeToggle != null) {
-                        SunIcon(
-                            onClick = onThemeToggle,
-                            color = iconTextColor,
-                            iconSize = 20.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                    }
+                if (onThemeToggle != null) {
+                    SunIcon(
+                        onClick = onThemeToggle,
+                        color = iconTextColor,
+                        iconSize = 20.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
 
-                    IconButton(onClick = onEdit) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = stringResource(R.string.edit_work),
-                            tint = if (currentTheme == AppTheme.DARK) Color.White else Color.Black
-                        )
-                    }
+                IconButton(onClick = onEdit) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = stringResource(R.string.edit_work),
+                        tint = iconTextColor
+                    )
+                }
 
-                    Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(4.dp))
 
-                    IconButton(onClick = onDelete) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = stringResource(R.string.delete_work),
-                            tint = if (currentTheme == AppTheme.DARK) Color.White else Color.Black
-                        )
-                    }
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = stringResource(R.string.delete_work),
+                        tint = iconTextColor
+                    )
                 }
             }
 
-            if (detailSearchExpanded) {
-                val filtered = allWorks.filter {
-                    detailSearchQuery.isBlank() ||
-                        it.title.contains(detailSearchQuery, ignoreCase = true) ||
-                        it.otherTitle?.contains(detailSearchQuery, ignoreCase = true) == true
-                }.sortedBy { it.title.lowercase() }
-
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .widthIn(max = 720.dp)
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(filtered, key = { it.id }) { item ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onSelectWork?.invoke(item)
-                                    detailSearchExpanded = false
-                                    detailSearchQuery = ""
-                                }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Image(
-                                painter = rememberAsyncImagePainter(
-                                    (item.displayCoverPath())?.toCoverImageData()
-                                ),
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .size(54.dp)
-                                    .clip(RoundedCornerShape(8.dp)),
-                                contentScale = ContentScale.Crop
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = item.title,
-                                    color = titleColorBetween,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
-                    item {
-                        Spacer(modifier = Modifier.height(bottomNavigationClearance() + 16.dp))
-                    }
-                }
-            } else {
-                // Main scrollable content
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .widthIn(max = 720.dp)
-                        .padding(horizontal = 16.dp)
-                        .verticalScroll(scrollState),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+            // Main scrollable content
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = 720.dp)
+                    .padding(horizontal = 16.dp)
+                    .verticalScroll(scrollState),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
             // Область обложки
             Box(
                 modifier = Modifier
@@ -743,7 +739,7 @@ fun WorkDetailScreen(
                 otherTitles.firstOrNull()?.let { firstOtherTitle ->
                     Text(
                         text = firstOtherTitle,
-                        color = iconTextColor.copy(alpha = 0.7f),
+                        color = (if (currentTheme == AppTheme.DARK) Color(0xFFEDEDED) else Color(0xFF202020)).copy(alpha = 0.7f),
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.clickable { otherTitlesExpanded = true }
@@ -777,37 +773,55 @@ fun WorkDetailScreen(
                     DropdownMenu(
                         expanded = statusMenuExpanded,
                         onDismissRequest = { statusMenuExpanded = false },
-                        modifier = Modifier.background(mainBackgroundColor)
+                        shape = RoundedCornerShape(14.dp),
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        shadowElevation = 6.dp,
+                        tonalElevation = 2.dp,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                     ) {
-                        availableStatuses.forEach { (status, label) ->
-                            val isSelected = work.status == status
-                            val itemStatusColor = when (status) {
-                                WorkStatus.IN_PLANS -> Color(0xFF8E6687)
-                                WorkStatus.ABANDONED -> Color(0xFFFF5F5A)
-                                WorkStatus.READING -> Color(0xFF7179A4)
-                                WorkStatus.WATCHING -> Color(0xFF7179A4)
-                                WorkStatus.READ -> Color(0xFF79C77C)
-                                WorkStatus.WATCHED -> Color(0xFF79C77C)
-                            }
-
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = label,
-                                        color = if (isSelected) itemStatusColor else titleColorBetween,
-                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
-                                    )
-                                },
-                                onClick = {
-                                    statusMenuExpanded = false
-                                    if (!isSelected) {
-                                        pendingStatusChange = status
+                        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                availableStatuses.forEach { (status, label) ->
+                                    val isSelected = work.status == status
+                                    val itemStatusColor = when (status) {
+                                        WorkStatus.IN_PLANS -> Color(0xFF8E6687)
+                                        WorkStatus.ABANDONED -> Color(0xFFFF5F5A)
+                                        WorkStatus.READING -> Color(0xFF7179A4)
+                                        WorkStatus.WATCHING -> Color(0xFF7179A4)
+                                        WorkStatus.READ -> Color(0xFF79C77C)
+                                        WorkStatus.WATCHED -> Color(0xFF79C77C)
                                     }
-                                },
-                                colors = MenuDefaults.itemColors(
-                                    textColor = if (isSelected) itemStatusColor else titleColorBetween
-                                )
-                            )
+
+                                    AssistChip(
+                                        onClick = {
+                                            statusMenuExpanded = false
+                                            if (!isSelected) {
+                                                pendingStatusChange = status
+                                            }
+                                        },
+                                        label = {
+                                            Text(
+                                                text = label,
+                                                color = itemStatusColor,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        },
+                                        colors = AssistChipDefaults.assistChipColors(
+                                            containerColor = Color.Transparent,
+                                            labelColor = itemStatusColor
+                                        ),
+                                        border = AssistChipDefaults.assistChipBorder(
+                                            borderColor = if (isSelected) itemStatusColor else itemStatusColor.copy(alpha = 0.5f),
+                                            borderWidth = if (isSelected) 2.dp else 1.dp,
+                                            enabled = true
+                                        ),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -839,30 +853,49 @@ fun WorkDetailScreen(
                         DropdownMenu(
                             expanded = seriesTypeMenuExpanded,
                             onDismissRequest = { seriesTypeMenuExpanded = false },
-                            modifier = Modifier.background(mainBackgroundColor)
+                            shape = RoundedCornerShape(14.dp),
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            shadowElevation = 6.dp,
+                            tonalElevation = 2.dp,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                         ) {
-                            availableSeriesTypes.forEach { (type, label) ->
-                                if (label.isEmpty()) return@forEach // Пропускаем пустой вариант
-                                val isSelected = work.seriesType == type
+                            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    val itemColor = MaterialTheme.colorScheme.primary
+                                    availableSeriesTypes.forEach { (type, label) ->
+                                        if (label.isEmpty()) return@forEach // Пропускаем пустой вариант
+                                        val isSelected = work.seriesType == type
 
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            text = label,
-                                            color = if (isSelected) iconTextColor else titleColorBetween,
-                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                        AssistChip(
+                                            onClick = {
+                                                seriesTypeMenuExpanded = false
+                                                if (!isSelected) {
+                                                    pendingSeriesTypeChange = type
+                                                }
+                                            },
+                                            label = {
+                                                Text(
+                                                    text = label,
+                                                    color = if (isSelected) itemColor else MaterialTheme.colorScheme.onSurface,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                            },
+                                            colors = AssistChipDefaults.assistChipColors(
+                                                containerColor = Color.Transparent,
+                                                labelColor = if (isSelected) itemColor else MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            border = AssistChipDefaults.assistChipBorder(
+                                                borderColor = if (isSelected) itemColor else itemColor.copy(alpha = 0.5f),
+                                                borderWidth = if (isSelected) 2.dp else 1.dp,
+                                                enabled = true
+                                            ),
+                                            modifier = Modifier.fillMaxWidth()
                                         )
-                                    },
-                                    onClick = {
-                                        seriesTypeMenuExpanded = false
-                                        if (!isSelected) {
-                                            pendingSeriesTypeChange = type
-                                        }
-                                    },
-                                    colors = MenuDefaults.itemColors(
-                                        textColor = if (isSelected) iconTextColor else titleColorBetween
-                                    )
-                                )
+                                    }
+                                }
                             }
                         }
                     }
@@ -895,30 +928,49 @@ fun WorkDetailScreen(
                         DropdownMenu(
                             expanded = mangaTypeMenuExpanded,
                             onDismissRequest = { mangaTypeMenuExpanded = false },
-                            modifier = Modifier.background(mainBackgroundColor)
+                            shape = RoundedCornerShape(14.dp),
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            shadowElevation = 6.dp,
+                            tonalElevation = 2.dp,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                         ) {
-                            availableMangaTypes.forEach { (type, label) ->
-                                if (label.isEmpty()) return@forEach // Пропускаем пустой вариант
-                                val isSelected = work.mangaType == type
+                            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    val itemColor = MaterialTheme.colorScheme.primary
+                                    availableMangaTypes.forEach { (type, label) ->
+                                        if (label.isEmpty()) return@forEach // Пропускаем пустой вариант
+                                        val isSelected = work.mangaType == type
 
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            text = label,
-                                            color = if (isSelected) iconTextColor else titleColorBetween,
-                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                        AssistChip(
+                                            onClick = {
+                                                mangaTypeMenuExpanded = false
+                                                if (!isSelected) {
+                                                    pendingMangaTypeChange = type
+                                                }
+                                            },
+                                            label = {
+                                                Text(
+                                                    text = label,
+                                                    color = if (isSelected) itemColor else MaterialTheme.colorScheme.onSurface,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                            },
+                                            colors = AssistChipDefaults.assistChipColors(
+                                                containerColor = Color.Transparent,
+                                                labelColor = if (isSelected) itemColor else MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            border = AssistChipDefaults.assistChipBorder(
+                                                borderColor = if (isSelected) itemColor else itemColor.copy(alpha = 0.5f),
+                                                borderWidth = if (isSelected) 2.dp else 1.dp,
+                                                enabled = true
+                                            ),
+                                            modifier = Modifier.fillMaxWidth()
                                         )
-                                    },
-                                    onClick = {
-                                        mangaTypeMenuExpanded = false
-                                        if (!isSelected) {
-                                            pendingMangaTypeChange = type
-                                        }
-                                    },
-                                    colors = MenuDefaults.itemColors(
-                                        textColor = if (isSelected) iconTextColor else titleColorBetween
-                                    )
-                                )
+                                    }
+                                }
                             }
                         }
                     }
@@ -928,6 +980,7 @@ fun WorkDetailScreen(
             val cleanedPrimaryLink = run {
                 val raw = work.link?.takeIf { it.isNotBlank() }?.trim()
                     ?: work.link2?.takeIf { it.isNotBlank() }?.trim()
+                    ?: work.links.firstOrNull { it.isNotBlank() }?.trim()
                 raw?.replace("\\:", ":")?.replace("\\/", "/")
             }
             val hasPrimaryLink = !cleanedPrimaryLink.isNullOrBlank()
@@ -949,16 +1002,17 @@ fun WorkDetailScreen(
                         WorkType.BOOK, WorkType.MANGA -> stringResource(R.string.link_action_read)
                         WorkType.ANIME, WorkType.SERIES -> stringResource(R.string.link_action_watch)
                     }
+                    val fieldHighlight = FieldHighlightColor()
                     Button(
                         onClick = { openPrimaryLink() },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
+                            containerColor = AppButtonColor()
                         )
                     ) {
                         Text(actionLabel)
                     }
                 }
+                val buttonColor = AppButtonColor()
                 OutlinedButton(
                     onClick = {
                         editInfoParts = preparedEditInfo
@@ -966,9 +1020,9 @@ fun WorkDetailScreen(
                         showEditInfoDialog = true
                     },
                     colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.primary
+                        contentColor = buttonColor
                     ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+                    border = BorderStroke(1.dp, buttonColor)
                 ) {
                     Text(stringResource(R.string.edit_info_button))
                 }
@@ -1026,7 +1080,7 @@ fun WorkDetailScreen(
                     }
                 }
             }
-            work.author?.takeIf { it.isNotBlank() }?.let { infoParts.add("${stringResource(R.string.author)}: $it") }
+            work.author?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }?.let { infoParts.add("${stringResource(R.string.author)}: $it") }
             if (work.type == WorkType.ANIME) {
                 work.animeSeason?.let { season ->
                     val seasonLabel = when (season) {
@@ -1076,7 +1130,8 @@ fun WorkDetailScreen(
                     val end = period.endDate ?: "..."
                     "${period.startDate} - $end"
                 }
-                infoParts.add("Периоды: $periods")
+                val periodsLabel = stringResource(R.string.reading_periods_label)
+                infoParts.add("$periodsLabel: $periods")
             }
             if (infoParts.isNotEmpty()) {
                 Surface(
@@ -1114,7 +1169,7 @@ fun WorkDetailScreen(
                 ) {
                     Text(
                         text = if (work.description.isBlank()) stringResource(R.string.description_empty) else work.description,
-                        color = titleColorBetween,
+                        color = if (currentTheme == AppTheme.DARK) Color(0xFFEDEDED) else Color(0xFF202020),
                         fontSize = 17.sp,
                         lineHeight = 20.sp,
                         textAlign = TextAlign.Justify,
@@ -1191,7 +1246,97 @@ fun WorkDetailScreen(
                 }
             }
 
-            // Genres and Tags Block (Above Links)
+            // Unified Links Block (All links in one card - now above genres and tags)
+            val allLinks = remember(work.link, work.link2, work.links) {
+                work.allLinks().map { it.replace("\\:", ":").replace("\\/", "/") }
+            }
+
+            Surface(
+                color = mainBackgroundColor,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(R.string.links),
+                            color = if (currentTheme == AppTheme.DARK) Color.White else Color.Black,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        IconButton(
+                            onClick = {
+                                linksEditText = formatLinksForDisplay(work.link, work.link2, work.links)
+                                showEditLinksDialog = true
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = stringResource(R.string.edit_work),
+                                tint = iconTextColor.copy(alpha = 0.8f),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    if (allLinks.isNotEmpty()) {
+                        allLinks.forEachIndexed { index, linkUrl ->
+                            if (index > 0) {
+                                HorizontalDivider(
+                                    color = iconTextColor.copy(alpha = 0.15f),
+                                    thickness = 1.dp
+                                )
+                            }
+                            val itemLabel = if (allLinks.size > 1) {
+                                "${stringResource(R.string.link1).replace(" 1", "")} ${index + 1}"
+                            } else null
+
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                if (itemLabel != null) {
+                                    Text(
+                                        text = itemLabel,
+                                        color = (if (currentTheme == AppTheme.DARK) Color.White else Color.Black).copy(alpha = 0.7f),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                Text(
+                                    text = linkUrl,
+                                    color = Color(0xFF2196F3),
+                                    fontSize = 14.sp,
+                                    textDecoration = TextDecoration.Underline,
+                                    modifier = Modifier.clickable(
+                                        indication = null,
+                                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                                    ) {
+                                        LinkOpenHelper.openInExternalViewer(context, linkUrl)
+                                    }
+                                )
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = stringResource(R.string.links_empty),
+                            color = (if (currentTheme == AppTheme.DARK) Color.White else Color.Black).copy(alpha = 0.45f),
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+            }
+
+            // Genres and Tags Block (Below Links)
             if (work.genres.isNotEmpty() || work.tags.isNotEmpty()) {
                 Surface(
                     color = mainBackgroundColor,
@@ -1212,30 +1357,32 @@ fun WorkDetailScreen(
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
-                                FlowRow(
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    work.genres.forEach { genre ->
-                                        AssistChip(
-                                            onClick = { },
-                                            label = {
-                                                Text(
-                                                    text = genre,
-                                                    fontSize = 13.sp,
-                                                    color = if (currentTheme == AppTheme.DARK) Color.White else Color.Black
-                                                )
-                                            },
-                                            colors = AssistChipDefaults.assistChipColors(
-                                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                                            ),
-                                            border = AssistChipDefaults.assistChipBorder(
-                                                borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                                                borderWidth = 1.dp,
-                                                enabled = true
-                                            ),
-                                            shape = RoundedCornerShape(8.dp)
-                                        )
+                                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                                    ChipsFlowRow(
+                                        horizontalSpacing = 4.dp,
+                                        verticalSpacing = 4.dp
+                                    ) {
+                                        work.genres.forEach { genre ->
+                                            AssistChip(
+                                                onClick = { onGenreClick?.invoke(genre) },
+                                                label = {
+                                                    Text(
+                                                        text = genre,
+                                                        fontSize = 13.sp,
+                                                        color = if (currentTheme == AppTheme.DARK) Color.White else Color.Black
+                                                    )
+                                                },
+                                                colors = AssistChipDefaults.assistChipColors(
+                                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                                ),
+                                                border = AssistChipDefaults.assistChipBorder(
+                                                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                                                    borderWidth = 1.dp,
+                                                    enabled = true
+                                                ),
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1256,92 +1403,35 @@ fun WorkDetailScreen(
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
-                                FlowRow(
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    work.tags.forEach { tag ->
-                                        val displayTag = if (tag.startsWith("#")) tag else "#$tag"
-                                        AssistChip(
-                                            onClick = { },
-                                            label = {
-                                                Text(
-                                                    text = displayTag,
-                                                    fontSize = 13.sp,
-                                                    color = if (currentTheme == AppTheme.DARK) Color.White else Color.Black
-                                                )
-                                            },
-                                            colors = AssistChipDefaults.assistChipColors(
-                                                containerColor = statusColor.copy(alpha = 0.12f)
-                                            ),
-                                            border = AssistChipDefaults.assistChipBorder(
-                                                borderColor = statusColor.copy(alpha = 0.35f),
-                                                borderWidth = 1.dp,
-                                                enabled = true
-                                            ),
-                                            shape = RoundedCornerShape(8.dp)
-                                        )
+                                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                                    ChipsFlowRow(
+                                        horizontalSpacing = 4.dp,
+                                        verticalSpacing = 4.dp
+                                    ) {
+                                        work.tags.forEach { tag ->
+                                            val displayTag = if (tag.startsWith("#")) tag else "#$tag"
+                                            AssistChip(
+                                                onClick = { onTagClick?.invoke(displayTag) },
+                                                label = {
+                                                    Text(
+                                                        text = displayTag,
+                                                        fontSize = 13.sp,
+                                                        color = if (currentTheme == AppTheme.DARK) Color.White else Color.Black
+                                                    )
+                                                },
+                                                colors = AssistChipDefaults.assistChipColors(
+                                                    containerColor = statusColor.copy(alpha = 0.12f)
+                                                ),
+                                                border = AssistChipDefaults.assistChipBorder(
+                                                    borderColor = statusColor.copy(alpha = 0.35f),
+                                                    borderWidth = 1.dp,
+                                                    enabled = true
+                                                ),
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                        }
                                     }
                                 }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Unified Links Block (All links in one card)
-            val allLinks = remember(work.link, work.link2) {
-                val list = mutableListOf<String>()
-                work.link?.takeIf { it.isNotBlank() }?.split("\n", ";")?.map { it.trim() }?.filter { it.isNotEmpty() }?.let { list.addAll(it) }
-                work.link2?.takeIf { it.isNotBlank() }?.split("\n", ";")?.map { it.trim() }?.filter { it.isNotEmpty() }?.let { list.addAll(it) }
-                list.map { it.replace("\\:", ":").replace("\\/", "/") }.distinct()
-            }
-
-            if (allLinks.isNotEmpty()) {
-                Surface(
-                    color = mainBackgroundColor,
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        allLinks.forEachIndexed { index, linkUrl ->
-                            if (index > 0) {
-                                HorizontalDivider(
-                                    color = iconTextColor.copy(alpha = 0.15f),
-                                    thickness = 1.dp
-                                )
-                            }
-                            val labelText = if (allLinks.size == 1) {
-                                stringResource(R.string.links).takeIf { it.isNotBlank() } ?: stringResource(R.string.link1).replace(" 1", "")
-                            } else {
-                                "${stringResource(R.string.link1).replace(" 1", "")} ${index + 1}"
-                            }
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
-                                Text(
-                                    text = labelText,
-                                    color = if (currentTheme == AppTheme.DARK) Color.White else Color.Black,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = linkUrl,
-                                    color = Color(0xFF2196F3),
-                                    fontSize = 14.sp,
-                                    textDecoration = TextDecoration.Underline,
-                                    modifier = Modifier.clickable(
-                                        indication = null,
-                                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                                    ) {
-                                        LinkOpenHelper.openInExternalViewer(context, linkUrl)
-                                    }
-                                )
                             }
                         }
                     }
@@ -1377,138 +1467,249 @@ fun WorkDetailScreen(
 
             // Bottom padding so all content can scroll cleanly
             Spacer(modifier = Modifier.height(115.dp))
+            }
+        }
+
+        // Полноэкранный оверлей поиска с затемненным фоном
+        if (detailSearchExpanded) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        if (currentTheme == AppTheme.DARK)
+                            Color.Black.copy(alpha = 0.92f)
+                        else
+                            Color(0xEE181818)
+                    )
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) {
+                        // Поглощаем клики внутри оверлея
+                    }
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Spacer(modifier = Modifier.height(40.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .widthIn(max = 720.dp)
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = {
+                                detailSearchExpanded = false
+                                detailSearchQuery = ""
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = stringResource(R.string.back),
+                                tint = if (currentTheme == AppTheme.DARK) iconTextColor else Color.White
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        SearchBar(
+                            modifier = Modifier.weight(1f),
+                            query = detailSearchQuery,
+                            onSearchQueryChange = { detailSearchQuery = it },
+                            currentTheme = currentTheme,
+                            autoFocus = true
+                        )
+                    }
+
+                    val dq = detailSearchQuery.trim()
+                    val filtered = allWorks.filter {
+                        dq.isBlank() ||
+                            it.title.contains(dq, ignoreCase = true) ||
+                            it.otherTitle?.contains(dq, ignoreCase = true) == true ||
+                            it.author?.contains(dq, ignoreCase = true) == true
+                    }.sortedBy { it.title.lowercase() }
+
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .widthIn(max = 720.dp)
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(filtered, key = { it.id }) { item ->
+                            val tabLabel = when (item.type) {
+                                WorkType.BOOK -> stringResource(R.string.tab_books)
+                                WorkType.ANIME -> stringResource(R.string.tab_anime)
+                                WorkType.MANGA -> stringResource(R.string.tab_manga)
+                                WorkType.SERIES -> stringResource(R.string.tab_series)
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        onSelectWork?.invoke(item)
+                                        detailSearchExpanded = false
+                                        detailSearchQuery = ""
+                                    }
+                                    .padding(vertical = 8.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Image(
+                                    painter = rememberAsyncImagePainter(
+                                        (item.displayCoverPath())?.toCoverImageData()
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(54.dp)
+                                        .clip(RoundedCornerShape(8.dp)),
+                                    contentScale = ContentScale.Crop
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = item.title,
+                                        color = if (currentTheme == AppTheme.DARK) titleColorBetween else Color.White,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 15.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = tabLabel,
+                                        color = (if (currentTheme == AppTheme.DARK) iconTextColor else Color.White).copy(alpha = 0.7f),
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+                        item {
+                            Spacer(modifier = Modifier.height(bottomNavigationClearance() + 16.dp))
+                        }
+                    }
                 }
             }
         }
 
-        // Bottom popup with names (like sheet), animated over content
-        androidx.compose.animation.AnimatedVisibility(
-            visible = otherTitlesExpanded && otherTitles.isNotEmpty(),
-            enter = fadeIn(animationSpec = tween(110)) + slideInVertically(
-                initialOffsetY = { it / 3 },
-                animationSpec = tween(110)
-            ),
-            exit = fadeOut(animationSpec = tween(90)) + slideOutVertically(
-                targetOffsetY = { it / 3 },
-                animationSpec = tween(90)
-            ),
-            modifier = Modifier
-                .fillMaxSize()
-                .align(Alignment.BottomCenter)
-        ) {
-            // Контейнер для фонового клика и самого Popup
-            Box(
-                modifier = Modifier.fillMaxSize()
+        // Bottom popup with names (like sheet), animated over content and overlapping bottom navigation bar
+        if (otherTitlesExpanded && otherTitles.isNotEmpty()) {
+            Dialog(
+                onDismissRequest = { otherTitlesExpanded = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
             ) {
-                // Фоновый слой: закрывает Popup только при клике за его пределами
                 Box(
                     modifier = Modifier
-                        .matchParentSize()
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.45f))
                         .clickable(
                             indication = null,
                             interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
                         ) {
                             otherTitlesExpanded = false
-                        }
-                )
-
-                // Сам Popup: клики внутри него НЕ закрывают окно
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .padding(bottom = bottomNavigationClearance(), start = 12.dp, end = 12.dp)
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                        ) {
-                            // Поглощаем клик внутри Popup, чтобы не срабатывало закрытие
                         },
-                    color = mainBackgroundColor,
-                    shape = RoundedCornerShape(24.dp),
-                    tonalElevation = 8.dp
+                    contentAlignment = Alignment.BottomCenter
                 ) {
-                    Column(
+                    Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 400.dp)
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 20.dp, vertical = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                            .navigationBarsPadding()
+                            .padding(bottom = 16.dp, start = 12.dp, end = 12.dp)
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                            ) {
+                                // Поглощаем клик внутри Popup, чтобы не срабатывало закрытие
+                            },
+                        color = mainBackgroundColor,
+                        shape = RoundedCornerShape(24.dp),
+                        tonalElevation = 8.dp
                     ) {
-                        // Название
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = stringResource(R.string.title),
-                                color = titleColorBetween,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            IconButton(
-                                onClick = {
-                                    clipboard.setText(AnnotatedString(work.title))
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = stringResource(R.string.copy_title_content_desc),
-                                    tint = iconTextColor
-                                )
-                            }
-                        }
-                        Text(
-                            text = work.title,
-                            color = iconTextColor,
-                            fontSize = 14.sp
-                        )
-
-                        // Разделитель
-                        HorizontalDivider(color = iconTextColor.copy(alpha = 0.2f))
-
-                        // Альтернативные названия
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = stringResource(R.string.alternative_titles),
-                                color = titleColorBetween,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            IconButton(
-                                onClick = {
-                                    clipboard.setText(AnnotatedString(otherTitles.joinToString("\n")))
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = stringResource(R.string.copy_alternative_titles_content_desc),
-                                    tint = iconTextColor
-                                )
-                            }
-                        }
                         Column(
-                            verticalArrangement = Arrangement.spacedBy(1.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 420.dp)
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 20.dp, vertical = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            otherTitles.forEach { t ->
+                            // Название
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
                                 Text(
-                                    text = t,
-                                    color = iconTextColor,
-                                    fontSize = 14.sp
+                                    text = stringResource(R.string.title),
+                                    color = titleColorBetween,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.SemiBold
                                 )
+                                IconButton(
+                                    onClick = {
+                                        clipboard.setText(AnnotatedString(work.title))
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = stringResource(R.string.copy_title_content_desc),
+                                        tint = iconTextColor
+                                    )
+                                }
+                            }
+                            Text(
+                                text = work.title,
+                                color = if (currentTheme == AppTheme.DARK) Color.White else Color.Black,
+                                fontSize = 14.sp
+                            )
+
+                            // Разделитель
+                            HorizontalDivider(color = iconTextColor.copy(alpha = 0.2f))
+
+                            // Альтернативные названия
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.alternative_titles),
+                                    color = titleColorBetween,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                IconButton(
+                                    onClick = {
+                                        clipboard.setText(AnnotatedString(otherTitles.joinToString("\n")))
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = stringResource(R.string.copy_alternative_titles_content_desc),
+                                        tint = iconTextColor
+                                    )
+                                }
+                            }
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(1.dp)
+                            ) {
+                                otherTitles.forEach { t ->
+                                    Text(
+                                        text = t,
+                                        color = if (currentTheme == AppTheme.DARK) Color.White else Color.Black,
+                                        fontSize = 14.sp
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(bottomNavigationClearance() + 16.dp))
         }
 
         // Диалог редактирования информации
@@ -1520,6 +1721,25 @@ fun WorkDetailScreen(
                 onSave = { updatedWork ->
                     onSave(updatedWork)
                     showEditInfoDialog = false
+                },
+                currentTheme = currentTheme
+            )
+        }
+
+        if (showEditLinksDialog) {
+            EditLinksDialog(
+                initialLinksText = linksEditText,
+                onDismiss = { showEditLinksDialog = false },
+                onSave = { newText ->
+                    val allParsedLinks = parseLinksList(newText)
+                    val updatedWork = work.copy(
+                        link = allParsedLinks.getOrNull(0),
+                        link2 = allParsedLinks.getOrNull(1),
+                        links = allParsedLinks,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    onSave(updatedWork)
+                    showEditLinksDialog = false
                 },
                 currentTheme = currentTheme
             )
@@ -1623,6 +1843,7 @@ private fun EditInfoDialog(
     val searchBarColor = SearchBarColor()
     // Цвет для текста полей и лейблов: белый в тёмной теме, чёрный в светлой
     val fieldTextColor = if (currentTheme == AppTheme.DARK) Color.White else Color.Black
+    val fieldHighlight = FieldHighlightColor()
 
     var tempWork by remember { mutableStateOf(work) }
     var tempValues by remember { mutableStateOf(editInfoParts.toMutableList()) }
@@ -1718,12 +1939,13 @@ private fun EditInfoDialog(
                             colors = TextFieldDefaults.colors(
                                 focusedContainerColor = searchBarColor,
                                 unfocusedContainerColor = searchBarColor,
-                                focusedIndicatorColor = iconTextColor.copy(alpha = 0.6f),
+                                focusedIndicatorColor = fieldHighlight,
                                 unfocusedIndicatorColor = iconTextColor.copy(alpha = 0.3f),
                                 focusedTextColor = fieldTextColor,
                                 unfocusedTextColor = fieldTextColor,
-                                focusedLabelColor = fieldTextColor,
-                                unfocusedLabelColor = fieldTextColor
+                                focusedLabelColor = fieldHighlight,
+                                unfocusedLabelColor = fieldTextColor,
+                                cursorColor = fieldHighlight
                             ),
                             parentScrollState = editDialogScrollState,
                         )
@@ -1743,12 +1965,13 @@ private fun EditInfoDialog(
                             colors = TextFieldDefaults.colors(
                                 focusedContainerColor = searchBarColor,
                                 unfocusedContainerColor = searchBarColor,
-                                focusedIndicatorColor = iconTextColor.copy(alpha = 0.6f),
+                                focusedIndicatorColor = fieldHighlight,
                                 unfocusedIndicatorColor = iconTextColor.copy(alpha = 0.3f),
                                 focusedTextColor = fieldTextColor,
                                 unfocusedTextColor = fieldTextColor,
-                                focusedLabelColor = fieldTextColor,
-                                unfocusedLabelColor = fieldTextColor
+                                focusedLabelColor = fieldHighlight,
+                                unfocusedLabelColor = fieldTextColor,
+                                cursorColor = fieldHighlight
                             )
                         )
                     } else {
@@ -1786,12 +2009,13 @@ private fun EditInfoDialog(
                                     colors = TextFieldDefaults.colors(
                                         focusedContainerColor = searchBarColor,
                                         unfocusedContainerColor = searchBarColor,
-                                        focusedIndicatorColor = iconTextColor.copy(alpha = 0.6f),
+                                        focusedIndicatorColor = fieldHighlight,
                                         unfocusedIndicatorColor = iconTextColor.copy(alpha = 0.3f),
                                         focusedTextColor = fieldTextColor,
                                         unfocusedTextColor = fieldTextColor,
-                                        focusedLabelColor = fieldTextColor,
-                                        unfocusedLabelColor = fieldTextColor
+                                        focusedLabelColor = fieldHighlight,
+                                        unfocusedLabelColor = fieldTextColor,
+                                        cursorColor = fieldHighlight
                                     )
                                 )
 
@@ -1846,12 +2070,13 @@ private fun EditInfoDialog(
                                 colors = TextFieldDefaults.colors(
                                     focusedContainerColor = searchBarColor,
                                     unfocusedContainerColor = searchBarColor,
-                                    focusedIndicatorColor = iconTextColor.copy(alpha = 0.6f),
+                                    focusedIndicatorColor = fieldHighlight,
                                     unfocusedIndicatorColor = iconTextColor.copy(alpha = 0.3f),
                                     focusedTextColor = fieldTextColor,
                                     unfocusedTextColor = fieldTextColor,
-                                    focusedLabelColor = fieldTextColor,
-                                    unfocusedLabelColor = fieldTextColor
+                                    focusedLabelColor = fieldHighlight,
+                                    unfocusedLabelColor = fieldTextColor,
+                                    cursorColor = fieldHighlight
                                 )
                             )
                         }
@@ -2003,8 +2228,12 @@ private fun EditInfoDialog(
                                             val month = digits.substring(2, 4)
                                             val year = digits.substring(4, 8)
                                             "$year-$month-$day"
-                                        } else {
+                                        } else if (item.value?.trim()?.matches(Regex("^\\d{4}-\\d{2}-\\d{2}$")) == true) {
+                                            item.value!!.trim()
+                                        } else if (digits.isEmpty() && item.originalValue != null) {
                                             null
+                                        } else {
+                                            item.originalValue as? String
                                         }
                                         updatedWork.copy(dateRead = newDate)
                                     }
@@ -2013,7 +2242,7 @@ private fun EditInfoDialog(
                                             rereadDates = parseRereadDatesForSave(item.value.orEmpty())
                                         )
                                     }
-                                    "author" -> updatedWork.copy(author = item.value?.takeIf { it.isNotBlank() })
+                                    "author" -> updatedWork.copy(author = item.value?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) })
                                     "note" -> updatedWork.copy(note = item.value?.takeIf { it.isNotBlank() })
                                     else -> updatedWork
                                 }
@@ -2037,6 +2266,9 @@ private fun EditInfoDialog(
 
                             onSave(updatedWork)
                         },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AppButtonColor()
+                        ),
                         modifier = if (isLandscape) Modifier.height(44.dp).padding(horizontal = 24.dp) else Modifier
                     ) {
                         Text(
@@ -2049,6 +2281,72 @@ private fun EditInfoDialog(
             }
         }
     }
+}
+
+@Composable
+private fun EditLinksDialog(
+    initialLinksText: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+    currentTheme: AppTheme
+) {
+    var text by remember { mutableStateOf(initialLinksText) }
+    val mainBackgroundColor = MainBackgroundColor()
+    val fieldTextColor = if (currentTheme == AppTheme.DARK) Color.White else Color.Black
+    val iconTextColor = IconTextColor()
+    val fieldHighlight = FieldHighlightColor()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = mainBackgroundColor,
+        shape = RoundedCornerShape(16.dp),
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text(stringResource(R.string.links)) },
+                    placeholder = { Text(stringResource(R.string.links_placeholder)) },
+                    minLines = 3,
+                    maxLines = 8,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = fieldTextColor,
+                        unfocusedTextColor = fieldTextColor,
+                        focusedBorderColor = fieldHighlight,
+                        unfocusedBorderColor = iconTextColor.copy(alpha = 0.3f),
+                        focusedLabelColor = fieldHighlight,
+                        unfocusedLabelColor = iconTextColor.copy(alpha = 0.7f),
+                        cursorColor = fieldHighlight
+                    )
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(text) },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AppButtonColor()
+                )
+            ) {
+                Text(
+                    text = stringResource(R.string.save),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(
+                    text = stringResource(R.string.cancel),
+                    color = iconTextColor
+                )
+            }
+        }
+    )
 }
 
 private data class UnitProgressEditState(
@@ -2109,15 +2407,18 @@ private fun EditUnitProgressFieldRow(
         }
     }
 
+    val fieldHighlight = FieldHighlightColor()
+
     val fieldColors = TextFieldDefaults.colors(
         focusedContainerColor = searchBarColor,
         unfocusedContainerColor = searchBarColor,
-        focusedIndicatorColor = iconTextColor.copy(alpha = 0.6f),
+        focusedIndicatorColor = fieldHighlight,
         unfocusedIndicatorColor = iconTextColor.copy(alpha = 0.3f),
         focusedTextColor = fieldTextColor,
         unfocusedTextColor = fieldTextColor,
-        focusedLabelColor = fieldTextColor,
+        focusedLabelColor = fieldHighlight,
         unfocusedLabelColor = fieldTextColor,
+        cursorColor = fieldHighlight,
     )
 
     fun formatProgressValue(value: Double): String =

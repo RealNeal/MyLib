@@ -13,6 +13,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -31,6 +32,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
+import com.rn.library.ui.components.ColorSettingsDialog
+import com.rn.library.ui.components.TopOptionsMenu
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -45,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -71,6 +76,7 @@ import com.rn.library.data.*
 import com.rn.library.data.toCoverImageData
 import androidx.compose.ui.res.stringResource
 import com.rn.library.R
+import com.rn.library.ui.Language
 import com.rn.library.ui.rememberLanguageState
 import com.rn.library.ui.LanguageState
 import com.rn.library.ui.workStatusLabel
@@ -90,10 +96,7 @@ import com.rn.library.ui.components.WorkItemGridCard
 import com.rn.library.util.WindowHeightClass
 import com.rn.library.util.WindowWidthClass
 import com.rn.library.util.rememberWindowSizeInfo
-import com.rn.library.ui.theme.IconTextColor
-import com.rn.library.ui.theme.MainBackgroundColor
-import com.rn.library.ui.theme.ThemePalette
-import com.rn.library.ui.theme.TitleColorBetween
+import com.rn.library.ui.theme.*
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -149,19 +152,10 @@ private data class PendingWorkSave(
 // Extension function to convert Work to WorkItem (with localized labels and status)
 fun Work.toWorkItem(
     statusLabel: String,
-    imageUrlOverride: String? = null
+    imageUrlOverride: String? = null,
+    currentLanguage: Language = Language.RUSSIAN
 ): WorkItem {
-    fun plural(count: Int, one: String, few: String, many: String): String {
-        val mod10 = count % 10
-        val mod100 = count % 100
-        val form = if (mod10 == 1 && mod100 != 11) one
-        else if (mod10 in 2..4 && mod100 !in 12..14) few
-        else many
-        return "$count $form"
-    }
-
     fun formatDouble(value: Double): String {
-        // Remove trailing zeros and decimal point if not needed
         return if (value % 1.0 == 0.0) {
             value.toInt().toString()
         } else {
@@ -169,16 +163,160 @@ fun Work.toWorkItem(
         }
     }
 
-    fun formatDoubleWithPlural(value: Double, one: String, few: String, many: String): String {
+    fun formatCount(count: Int, kind: String): String {
+        return when (currentLanguage) {
+            Language.RUSSIAN -> {
+                val mod10 = count % 10
+                val mod100 = count % 100
+                val form = when (kind) {
+                    "season" -> if (mod10 == 1 && mod100 != 11) "сезон" else if (mod10 in 2..4 && mod100 !in 12..14) "сезона" else "сезонов"
+                    "volume" -> if (mod10 == 1 && mod100 != 11) "том" else if (mod10 in 2..4 && mod100 !in 12..14) "тома" else "томов"
+                    "chapter" -> if (mod10 == 1 && mod100 != 11) "глава" else if (mod10 in 2..4 && mod100 !in 12..14) "главы" else "глав"
+                    else -> if (mod10 == 1 && mod100 != 11) "серия" else if (mod10 in 2..4 && mod100 !in 12..14) "серии" else "серий"
+                }
+                "$count $form"
+            }
+            Language.GERMAN -> {
+                val form = when (kind) {
+                    "season" -> if (count == 1) "Staffel" else "Staffeln"
+                    "volume" -> if (count == 1) "Band" else "Bände"
+                    "chapter" -> "Kapitel"
+                    else -> if (count == 1) "Episode" else "Episoden"
+                }
+                "$count $form"
+            }
+            Language.FRENCH -> {
+                val form = when (kind) {
+                    "season" -> if (count <= 1) "saison" else "saisons"
+                    "volume" -> if (count <= 1) "volume" else "volumes"
+                    "chapter" -> if (count <= 1) "chapitre" else "chapitres"
+                    else -> if (count <= 1) "épisode" else "épisodes"
+                }
+                "$count $form"
+            }
+            Language.SPANISH -> {
+                val form = when (kind) {
+                    "season" -> if (count == 1) "temporada" else "temporadas"
+                    "volume" -> if (count == 1) "volumen" else "volúmenes"
+                    "chapter" -> if (count == 1) "capítulo" else "capítulos"
+                    else -> if (count == 1) "episodio" else "episodios"
+                }
+                "$count $form"
+            }
+            Language.PORTUGUESE -> {
+                val form = when (kind) {
+                    "season" -> if (count == 1) "temporada" else "temporadas"
+                    "volume" -> if (count == 1) "volume" else "volumes"
+                    "chapter" -> if (count == 1) "capítulo" else "capítulos"
+                    else -> if (count == 1) "episódio" else "episódios"
+                }
+                "$count $form"
+            }
+            Language.JAPANESE -> when (kind) {
+                "season" -> "${count}期"
+                "volume" -> "${count}巻"
+                else -> "${count}話"
+            }
+            Language.KOREAN -> when (kind) {
+                "season" -> "${count}시즌"
+                "volume" -> "${count}권"
+                else -> "${count}화"
+            }
+            Language.CHINESE -> when (kind) {
+                "season" -> "${count}季"
+                "volume" -> "${count}卷"
+                "chapter" -> "${count}话"
+                else -> "${count}集"
+            }
+            Language.ENGLISH -> {
+                val form = when (kind) {
+                    "season" -> if (count == 1) "season" else "seasons"
+                    "volume" -> if (count == 1) "volume" else "volumes"
+                    "chapter" -> if (count == 1) "chapter" else "chapters"
+                    else -> if (count == 1) "episode" else "episodes"
+                }
+                "$count $form"
+            }
+        }
+    }
+
+    fun formatDoubleWithKind(value: Double, kind: String): String {
         val formatted = formatDouble(value)
-        // For pluralization, use the integer part
         val intPart = value.toInt()
-        val mod10 = intPart % 10
-        val mod100 = intPart % 100
-        val form = if (mod10 == 1 && mod100 != 11) one
-        else if (mod10 in 2..4 && mod100 !in 12..14) few
-        else many
-        return "$formatted $form"
+        return when (currentLanguage) {
+            Language.RUSSIAN -> {
+                val mod10 = intPart % 10
+                val mod100 = intPart % 100
+                val form = when (kind) {
+                    "season" -> if (mod10 == 1 && mod100 != 11) "сезон" else if (mod10 in 2..4 && mod100 !in 12..14) "сезона" else "сезонов"
+                    "volume" -> if (mod10 == 1 && mod100 != 11) "том" else if (mod10 in 2..4 && mod100 !in 12..14) "тома" else "томов"
+                    "chapter" -> if (mod10 == 1 && mod100 != 11) "глава" else if (mod10 in 2..4 && mod100 !in 12..14) "главы" else "глав"
+                    else -> if (mod10 == 1 && mod100 != 11) "серия" else if (mod10 in 2..4 && mod100 !in 12..14) "серии" else "серий"
+                }
+                "$formatted $form"
+            }
+            Language.GERMAN -> {
+                val form = when (kind) {
+                    "season" -> if (intPart == 1) "Staffel" else "Staffeln"
+                    "volume" -> if (intPart == 1) "Band" else "Bände"
+                    "chapter" -> "Kapitel"
+                    else -> if (intPart == 1) "Episode" else "Episoden"
+                }
+                "$formatted $form"
+            }
+            Language.FRENCH -> {
+                val form = when (kind) {
+                    "season" -> if (intPart <= 1) "saison" else "saisons"
+                    "volume" -> if (intPart <= 1) "volume" else "volumes"
+                    "chapter" -> if (intPart <= 1) "chapitre" else "chapitres"
+                    else -> if (intPart <= 1) "épisode" else "épisodes"
+                }
+                "$formatted $form"
+            }
+            Language.SPANISH -> {
+                val form = when (kind) {
+                    "season" -> if (intPart == 1) "temporada" else "temporadas"
+                    "volume" -> if (intPart == 1) "volumen" else "volúmenes"
+                    "chapter" -> if (intPart == 1) "capítulo" else "capítulos"
+                    else -> if (intPart == 1) "episodio" else "episodios"
+                }
+                "$formatted $form"
+            }
+            Language.PORTUGUESE -> {
+                val form = when (kind) {
+                    "season" -> if (intPart == 1) "temporada" else "temporadas"
+                    "volume" -> if (intPart == 1) "volume" else "volumes"
+                    "chapter" -> if (intPart == 1) "capítulo" else "capítulos"
+                    else -> if (intPart == 1) "episódio" else "episódios"
+                }
+                "$formatted $form"
+            }
+            Language.JAPANESE -> when (kind) {
+                "season" -> "${formatted}期"
+                "volume" -> "${formatted}巻"
+                else -> "${formatted}話"
+            }
+            Language.KOREAN -> when (kind) {
+                "season" -> "${formatted}시즌"
+                "volume" -> "${formatted}권"
+                else -> "${formatted}화"
+            }
+            Language.CHINESE -> when (kind) {
+                "season" -> "${formatted}季"
+                "volume" -> "${formatted}卷"
+                "chapter" -> "${formatted}话"
+                else -> "${formatted}集"
+            }
+            Language.ENGLISH -> {
+                val form = when (kind) {
+                    "season" -> if (intPart == 1) "season" else "seasons"
+                    "volume" -> if (intPart == 1) "volume" else "volumes"
+                    "chapter" -> if (intPart == 1) "chapter" else "chapters"
+                    else -> if (intPart == 1) "episode" else "episodes"
+                }
+                "$formatted $form"
+            }
+        }
     }
 
     val metaParts = mutableListOf<String>()
@@ -186,30 +324,30 @@ fun Work.toWorkItem(
     val metaLine2: String?
     when (type) {
         WorkType.BOOK -> {
-            val volumesText = chapters?.let { formatDoubleWithPlural(it, "том", "тома", "томов") }
-            val chaptersText = bookChapters?.let { formatDoubleWithPlural(it, "глава", "главы", "глав") }
+            val volumesText = chapters?.let { formatDoubleWithKind(it, "volume") }
+            val chaptersText = bookChapters?.let { formatDoubleWithKind(it, "chapter") }
             metaLine1 = volumesText
             metaLine2 = chaptersText
             volumesText?.let { metaParts.add(it) }
             chaptersText?.let { metaParts.add(it) }
         }
         WorkType.MANGA -> {
-            val volumesText = volumes?.let { formatDoubleWithPlural(it, "том", "тома", "томов") }
-            val chaptersText = chapters?.let { formatDoubleWithPlural(it, "глава", "главы", "глав") }
+            val volumesText = volumes?.let { formatDoubleWithKind(it, "volume") }
+            val chaptersText = chapters?.let { formatDoubleWithKind(it, "chapter") }
             metaLine1 = volumesText
             metaLine2 = chaptersText
             volumesText?.let { metaParts.add(it) }
             chaptersText?.let { metaParts.add(it) }
         }
         WorkType.ANIME -> {
-            val episodesText = episodes?.let { formatDoubleWithPlural(it, "серия", "серии", "серий") }
+            val episodesText = episodes?.let { formatDoubleWithKind(it, "episode") }
             metaLine1 = episodesText
             metaLine2 = null
             episodesText?.let { metaParts.add(it) }
         }
         WorkType.SERIES -> {
-            val seasonsText = seasons?.let { plural(it, "сезон", "сезона", "сезонов") }
-            val episodesText = episodes?.let { formatDoubleWithPlural(it, "серия", "серии", "серий") }
+            val seasonsText = seasons?.let { formatCount(it, "season") }
+            val episodesText = episodes?.let { formatDoubleWithKind(it, "episode") }
             metaLine1 = seasonsText
             metaLine2 = episodesText
             seasonsText?.let { metaParts.add(it) }
@@ -231,6 +369,33 @@ fun Work.toWorkItem(
     )
 }
 
+fun Work.matchesSearchQuery(query: String): Boolean {
+    if (query.isBlank()) return true
+    val trimmed = query.trim().lowercase()
+    val tagQuery = if (trimmed.startsWith("#")) trimmed.removePrefix("#").trim() else trimmed
+
+    // Title & alternative title
+    if (title.lowercase().contains(trimmed)) return true
+    if (otherTitle?.lowercase()?.contains(trimmed) == true) return true
+
+    // Author
+    if (author?.lowercase()?.contains(trimmed) == true) return true
+
+    // Genres (support partial and exact match)
+    if (genres.any { g ->
+        val cleanG = g.trim().lowercase()
+        cleanG.contains(trimmed) || (trimmed.length >= 3 && trimmed.contains(cleanG))
+    }) return true
+
+    // Tags (with or without '#')
+    if (tags.any { t ->
+        val cleanT = t.trim().lowercase().removePrefix("#")
+        cleanT.contains(tagQuery) || (tagQuery.length >= 3 && tagQuery.contains(cleanT))
+    }) return true
+
+    return false
+}
+
 @Composable
 fun LibraryScreen(
     currentTheme: AppTheme = AppTheme.DARK,
@@ -247,6 +412,22 @@ fun LibraryScreen(
     onUseCustomStatsColorChange: (Boolean) -> Unit = {},
     customStatsArgb: Int = 0xFF7C4DFF.toInt(),
     onCustomStatsArgbChange: (Int) -> Unit = {},
+    useCustomIconColor: Boolean = false,
+    onUseCustomIconColorChange: (Boolean) -> Unit = {},
+    customIconColorArgb: Int = 0xFFEAEAEA.toInt(),
+    onCustomIconColorChange: (Int) -> Unit = {},
+    useCustomBgColor: Boolean = false,
+    onUseCustomBgColorChange: (Boolean) -> Unit = {},
+    customBgColorArgb: Int = 0xFF1B1B1B.toInt(),
+    onCustomBgColorArgbChange: (Int) -> Unit = {},
+    useCustomTextColor: Boolean = false,
+    onUseCustomTextColorChange: (Boolean) -> Unit = {},
+    customTextColorArgb: Int = 0xFFEDEDED.toInt(),
+    onCustomTextColorArgbChange: (Int) -> Unit = {},
+    useCustomButtonColor: Boolean = false,
+    onUseCustomButtonColorChange: (Boolean) -> Unit = {},
+    customButtonColorArgb: Int = 0xFF6750A4.toInt(),
+    onCustomButtonColorArgbChange: (Int) -> Unit = {},
     providedLanguageState: LanguageState? = null,
     modifier: Modifier = Modifier
 ) {
@@ -329,9 +510,42 @@ fun LibraryScreen(
     LaunchedEffect(selectedItemKey) { selectedItem = navItemForKey(selectedItemKey) }
 
     var searchQuery by remember { mutableStateOf<String>("") }
+    var isTagOrGenreQuery by remember { mutableStateOf(false) }
     var statusFilter by remember { mutableStateOf<WorkStatus?>(null) }
     var showAddWorkScreen by remember { mutableStateOf<Boolean>(false) }
+    var showTopMenu by remember { mutableStateOf(false) }
+    var showColorSettingsDialog by remember { mutableStateOf(false) }
     var works by remember { mutableStateOf<List<Work>>(emptyList()) }
+
+    val allKnownGenres = remember(works) {
+        val predefined = listOf(
+            "Детектив", "Драма", "Игры", "История", "Комедия",
+            "Магия", "Меха", "Мистика", "Музыка", "Повседневность",
+            "Приключения", "Психология", "Романтика", "Сверхъестественное",
+            "Спорт", "Сёнэн", "Сэйнэн", "Сёдзё", "Триллер", "Ужасы",
+            "Фантастика", "Фэнтези", "Школа", "Экшен"
+        )
+        (works.flatMap { it.genres } + predefined)
+            .map { it.trim().lowercase() }
+            .filter { it.isNotBlank() }
+            .toSet()
+    }
+
+    val allKnownTags = remember(works) {
+        works.flatMap { it.tags }
+            .map { it.trim().lowercase().removePrefix("#") }
+            .filter { it.isNotBlank() }
+            .toSet()
+    }
+
+    fun isQueryTagOrGenre(q: String): Boolean {
+        val trimmed = q.trim().lowercase()
+        if (trimmed.isEmpty()) return false
+        if (trimmed.startsWith("#")) return true
+        if (allKnownGenres.contains(trimmed)) return true
+        if (allKnownTags.contains(trimmed)) return true
+        return false
+    }
     var sessionCoverByWorkId by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var selectedWork by remember { mutableStateOf<Work?>(null) }
     var editingWork by remember { mutableStateOf<Work?>(null) }
@@ -342,6 +556,8 @@ fun LibraryScreen(
 
     /** Счётчик повторного выбора вкладки «Профиль» (закрытие Настроек и др. оверлеев). */
     var profileReselectSignal by remember { mutableStateOf(0) }
+
+    val scope = rememberCoroutineScope()
 
     fun commitWorkSave(
         work: Work,
@@ -454,12 +670,7 @@ fun LibraryScreen(
 
         // Apply search filter
         if (searchQuery.isNotBlank()) {
-            filtered = filtered.filter {
-                it.title.contains(searchQuery, ignoreCase = true) ||
-                        it.otherTitle?.contains(searchQuery, ignoreCase = true) == true ||
-                        it.genres.any { g -> g.contains(searchQuery, ignoreCase = true) } ||
-                        it.tags.any { t -> t.contains(searchQuery, ignoreCase = true) }
-            }
+            filtered = filtered.filter { it.matchesSearchQuery(searchQuery) }
         }
 
         // Apply status filter
@@ -563,7 +774,9 @@ fun LibraryScreen(
                 selectedItemKey = navItemKey(item)
                 isHeaderVisible = true
                 statusFilter = null
-                searchQuery = ""
+                if (!isTagOrGenreQuery) {
+                    searchQuery = ""
+                }
                 selectedWork = null
                 expandedCoverWork = null
                 showAddWorkScreen = false
@@ -615,7 +828,7 @@ fun LibraryScreen(
                                     .fillMaxWidth()
                                     .wrapContentWidth(Alignment.CenterHorizontally)
                                     .widthIn(max = 720.dp)
-                                    .padding(horizontal = 20.dp)
+                                    .padding(start = 16.dp, end = 6.dp)
                             ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -623,38 +836,82 @@ fun LibraryScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     val iconTextColor = IconTextColor()
+                                    val tabColor = tabContentColor(currentTheme, dynamicColorsEnabled)
 
                                     SearchBar(
                                         modifier = Modifier.weight(1f),
                                         currentTheme = currentTheme,
                                         query = searchQuery,
-                                        onSearchQueryChange = { q -> searchQuery = q }
+                                        enabled = !showAddWorkScreen && selectedWork == null,
+                                        onSearchQueryChange = { q ->
+                                            searchQuery = q
+                                            isTagOrGenreQuery = isQueryTagOrGenre(q)
+                                        }
                                     )
 
-                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
 
-                                    SunIcon(
+                                    IconButton(
                                         onClick = {
                                             onThemeChange(if (currentTheme == AppTheme.DARK) AppTheme.LIGHT else AppTheme.DARK)
                                         },
-                                        color = iconTextColor,
-                                        iconSize = 20.dp
-                                    )
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        SunIcon(
+                                            onClick = {
+                                                onThemeChange(if (currentTheme == AppTheme.DARK) AppTheme.LIGHT else AppTheme.DARK)
+                                            },
+                                            color = iconTextColor,
+                                            iconSize = 20.dp
+                                        )
+                                    }
 
-                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Spacer(modifier = Modifier.width(2.dp))
 
                                     IconButton(
                                         onClick = {
                                             editingWork = null
                                             showAddWorkScreen = true
-                                        }
+                                        },
+                                        modifier = Modifier.size(36.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Add,
                                             contentDescription = stringResource(R.string.add_work),
-                                            tint = if (currentTheme == AppTheme.DARK) iconTextColor.copy(
-                                                alpha = 0.9f
-                                            ) else Color.Black
+                                            tint = iconTextColor,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.width(2.dp))
+
+                                    Box {
+                                        IconButton(
+                                            onClick = { showTopMenu = true },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.MoreVert,
+                                                contentDescription = stringResource(R.string.more_options),
+                                                tint = iconTextColor,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                        }
+
+                                        TopOptionsMenu(
+                                            expanded = showTopMenu,
+                                            onDismissRequest = { showTopMenu = false },
+                                            isGridView = isGridView,
+                                            onViewModeSelected = { grid ->
+                                                isGridView = grid
+                                                prefs.edit { putBoolean("view_grid_mode", grid) }
+                                                showTopMenu = false
+                                            },
+                                            onOpenColorSettings = {
+                                                showTopMenu = false
+                                                showColorSettingsDialog = true
+                                            },
+                                            activeColor = tabColor
                                         )
                                     }
                                 }
@@ -730,7 +987,7 @@ fun LibraryScreen(
                                                 }
                                             },
                                             colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
-                                                containerColor = scheme.primary,
+                                                containerColor = AppButtonColor(),
                                                 contentColor = scheme.onPrimary
                                             )
                                         ) { Text(stringResource(R.string.delete)) }
@@ -806,6 +1063,22 @@ fun LibraryScreen(
                                                 onUseCustomStatsColorChange = onUseCustomStatsColorChange,
                                                 customStatsArgb = customStatsArgb,
                                                 onCustomStatsArgbChange = onCustomStatsArgbChange,
+                                                useCustomIconColor = useCustomIconColor,
+                                                onUseCustomIconColorChange = onUseCustomIconColorChange,
+                                                customIconColorArgb = customIconColorArgb,
+                                                onCustomIconColorChange = onCustomIconColorChange,
+                                                useCustomBgColor = useCustomBgColor,
+                                                onUseCustomBgColorChange = onUseCustomBgColorChange,
+                                                customBgColorArgb = customBgColorArgb,
+                                                onCustomBgColorArgbChange = onCustomBgColorArgbChange,
+                                                useCustomTextColor = useCustomTextColor,
+                                                onUseCustomTextColorChange = onUseCustomTextColorChange,
+                                                customTextColorArgb = customTextColorArgb,
+                                                onCustomTextColorArgbChange = onCustomTextColorArgbChange,
+                                                useCustomButtonColor = useCustomButtonColor,
+                                                onUseCustomButtonColorChange = onUseCustomButtonColorChange,
+                                                customButtonColorArgb = customButtonColorArgb,
+                                                onCustomButtonColorArgbChange = onCustomButtonColorArgbChange,
                                                 booksTabEnabled = booksTabEnabled,
                                                 onBooksTabEnabledChange = { enabled ->
                                                     booksTabEnabled = enabled
@@ -921,15 +1194,7 @@ fun LibraryScreen(
                                                 val filtered = list.filter { work ->
                                                     val matchesStatus =
                                                         statusFilter == null || work.status == statusFilter
-                                                    val matchesQuery = searchQuery.isBlank() ||
-                                                            work.title.contains(
-                                                                searchQuery,
-                                                                ignoreCase = true
-                                                            ) ||
-                                                            work.otherTitle?.contains(
-                                                                searchQuery,
-                                                                ignoreCase = true
-                                                            ) == true
+                                                    val matchesQuery = work.matchesSearchQuery(searchQuery)
                                                     matchesStatus && matchesQuery
                                                 }
                                                 sortWorks(filtered, sortOrder)
@@ -960,7 +1225,8 @@ fun LibraryScreen(
                                                             WorkItemGridCard(
                                                                 workItem = work.toWorkItem(
                                                                     statusLabel = workStatusLabel(work.status),
-                                                                    imageUrlOverride = sessionCoverByWorkId[work.id]
+                                                                    imageUrlOverride = sessionCoverByWorkId[work.id],
+                                                                    currentLanguage = currentLanguage
                                                                 ),
                                                                 dynamicColorsEnabled = dynamicColorsEnabled,
                                                                 onClick = {
@@ -998,7 +1264,8 @@ fun LibraryScreen(
                                                                 WorkItemCard(
                                                                     workItem = work.toWorkItem(
                                                                         statusLabel = workStatusLabel(work.status),
-                                                                        imageUrlOverride = sessionCoverByWorkId[work.id]
+                                                                        imageUrlOverride = sessionCoverByWorkId[work.id],
+                                                                        currentLanguage = currentLanguage
                                                                     ),
                                                                     onClick = {
                                                                         selectedWork = work
@@ -1081,7 +1348,37 @@ fun LibraryScreen(
                                 onThemeToggle = {
                                     onThemeChange(if (currentTheme == AppTheme.DARK) AppTheme.LIGHT else AppTheme.DARK)
                                 },
-                                onScrollStateChange = null
+                                onScrollStateChange = null,
+                                onGenreClick = { genre ->
+                                    selectedWork = null
+                                    val targetItem = when (work.type) {
+                                        WorkType.BOOK -> NavigationItem.Books
+                                        WorkType.ANIME -> NavigationItem.Anime
+                                        WorkType.MANGA -> NavigationItem.Manga
+                                        WorkType.SERIES -> NavigationItem.TVSeries
+                                    }
+                                    selectedItem = targetItem
+                                    selectedItemKey = navItemKey(targetItem)
+                                    searchQuery = genre
+                                    isTagOrGenreQuery = true
+                                    statusFilter = null
+                                    isHeaderVisible = true
+                                },
+                                onTagClick = { tag ->
+                                    selectedWork = null
+                                    val targetItem = when (work.type) {
+                                        WorkType.BOOK -> NavigationItem.Books
+                                        WorkType.ANIME -> NavigationItem.Anime
+                                        WorkType.MANGA -> NavigationItem.Manga
+                                        WorkType.SERIES -> NavigationItem.TVSeries
+                                    }
+                                    selectedItem = targetItem
+                                    selectedItemKey = navItemKey(targetItem)
+                                    searchQuery = if (tag.startsWith("#")) tag else "#$tag"
+                                    isTagOrGenreQuery = true
+                                    statusFilter = null
+                                    isHeaderVisible = true
+                                }
                             )
                         }
                     }
@@ -1216,6 +1513,52 @@ fun LibraryScreen(
                             onDismiss = {
                                 pendingWorkSave = null
                                 showActivityStatsConfirm = false
+                            }
+                        )
+                    }
+
+                    if (showColorSettingsDialog) {
+                        ColorSettingsDialog(
+                            onDismissRequest = { showColorSettingsDialog = false },
+                            dynamicColorsEnabled = dynamicColorsEnabled,
+                            onDynamicColorsEnabledChange = onDynamicColorsEnabledChange,
+                            useCustomIconColor = useCustomIconColor,
+                            onUseCustomIconColorChange = onUseCustomIconColorChange,
+                            customIconColorArgb = customIconColorArgb,
+                            onCustomIconColorChange = onCustomIconColorChange,
+                            useCustomTextColor = useCustomTextColor,
+                            onUseCustomTextColorChange = onUseCustomTextColorChange,
+                            customTextColorArgb = customTextColorArgb,
+                            onCustomTextColorArgbChange = onCustomTextColorArgbChange,
+                            useCustomStatsColor = useCustomStatsColor,
+                            onUseCustomStatsColorChange = onUseCustomStatsColorChange,
+                            customStatsArgb = customStatsArgb,
+                            onCustomStatsArgbChange = onCustomStatsArgbChange,
+                            useCustomButtonColor = useCustomButtonColor,
+                            onUseCustomButtonColorChange = onUseCustomButtonColorChange,
+                            customButtonColorArgb = customButtonColorArgb,
+                            onCustomButtonColorArgbChange = onCustomButtonColorArgbChange,
+                            onResetToDefaults = {
+                                onUseCustomIconColorChange(false)
+                                onCustomIconColorChange(0xFFEAEAEA.toInt())
+                                onUseCustomTextColorChange(false)
+                                onCustomTextColorArgbChange(0xFFEDEDED.toInt())
+                                onUseCustomStatsColorChange(false)
+                                onCustomStatsArgbChange(0xFF7C4DFF.toInt())
+                                onUseCustomButtonColorChange(false)
+                                onCustomButtonColorArgbChange(0xFF6750A4.toInt())
+                                onUseCustomAccentChange(false)
+                                onCustomAccentArgbChange(0xFF6750A4.toInt())
+                                com.rn.library.ui.AppSettings.setUseCustomIconColor(context, false)
+                                com.rn.library.ui.AppSettings.setCustomIconColorArgb(context, 0xFFEAEAEA.toInt())
+                                com.rn.library.ui.AppSettings.setUseCustomTextColor(context, false)
+                                com.rn.library.ui.AppSettings.setCustomTextColorArgb(context, 0xFFEDEDED.toInt())
+                                com.rn.library.ui.AppSettings.setUseCustomStatsColor(context, false)
+                                com.rn.library.ui.AppSettings.setCustomStatsArgb(context, 0xFF7C4DFF.toInt())
+                                com.rn.library.ui.AppSettings.setUseCustomButtonColor(context, false)
+                                com.rn.library.ui.AppSettings.setCustomButtonColorArgb(context, 0xFF6750A4.toInt())
+                                com.rn.library.ui.AppSettings.setUseCustomAccent(context, false)
+                                com.rn.library.ui.AppSettings.setCustomAccentArgb(context, 0xFF6750A4.toInt())
                             }
                         )
                     }

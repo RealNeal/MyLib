@@ -30,10 +30,21 @@ class LanguageState(context: Context) {
         fun storedLanguage(context: Context): Language =
             loadLanguage(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
 
-        private fun loadLanguage(prefs: android.content.SharedPreferences): Language =
-            runCatching {
-                Language.valueOf(prefs.getString(KEY, Language.ENGLISH.name) ?: Language.ENGLISH.name)
+        private fun loadLanguage(prefs: android.content.SharedPreferences): Language {
+            if (!prefs.contains(KEY)) {
+                val deviceLang = java.util.Locale.getDefault().language.lowercase()
+                val detected = Language.values().firstOrNull {
+                    it.languageTag.equals(deviceLang, ignoreCase = true) ||
+                    it.name.equals(deviceLang, ignoreCase = true)
+                } ?: Language.ENGLISH
+                prefs.edit().putString(KEY, detected.name).apply()
+                return detected
+            }
+            return runCatching {
+                val storedName = prefs.getString(KEY, Language.ENGLISH.name) ?: Language.ENGLISH.name
+                Language.valueOf(storedName)
             }.getOrDefault(Language.ENGLISH)
+        }
 
         private fun persistAndApply(context: Context, language: Language, persist: Boolean = true) {
             if (persist) {

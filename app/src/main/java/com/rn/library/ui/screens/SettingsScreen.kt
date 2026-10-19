@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,15 +22,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -37,6 +42,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,14 +64,22 @@ import com.rn.library.R
 import com.rn.library.data.WorkRepository
 import com.rn.library.ui.AppSettings
 import com.rn.library.ui.Language
-import com.rn.library.ui.components.HsvColorPicker
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import com.rn.library.ui.components.ColorPickerDialog
+import com.rn.library.ui.components.RainbowColorWheelButton
 import com.rn.library.ui.components.bottomNavigationClearance
+import com.rn.library.ui.theme.AppButtonColor
+import com.rn.library.ui.theme.FieldHighlightColor
+import com.rn.library.ui.theme.IconTextColor
 import com.rn.library.ui.theme.MainBackgroundColor
 import com.rn.library.ui.theme.TitleColorBetween
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
@@ -74,14 +88,30 @@ fun SettingsScreen(
     currentTheme: AppTheme,
     dynamicColorsEnabled: Boolean,
     onDynamicColorsEnabledChange: (Boolean) -> Unit,
-    useCustomAccent: Boolean,
-    onUseCustomAccentChange: (Boolean) -> Unit,
-    customAccentArgb: Int,
-    onCustomAccentArgbChange: (Int) -> Unit,
-    useCustomStatsColor: Boolean,
-    onUseCustomStatsColorChange: (Boolean) -> Unit,
-    customStatsArgb: Int,
-    onCustomStatsArgbChange: (Int) -> Unit,
+    useCustomAccent: Boolean = false,
+    onUseCustomAccentChange: (Boolean) -> Unit = {},
+    customAccentArgb: Int = 0xFF6750A4.toInt(),
+    onCustomAccentArgbChange: (Int) -> Unit = {},
+    useCustomStatsColor: Boolean = false,
+    onUseCustomStatsColorChange: (Boolean) -> Unit = {},
+    customStatsArgb: Int = 0xFF7C4DFF.toInt(),
+    onCustomStatsArgbChange: (Int) -> Unit = {},
+    useCustomIconColor: Boolean = false,
+    onUseCustomIconColorChange: (Boolean) -> Unit = {},
+    customIconColorArgb: Int = 0xFFEAEAEA.toInt(),
+    onCustomIconColorChange: (Int) -> Unit = {},
+    useCustomBgColor: Boolean = false,
+    onUseCustomBgColorChange: (Boolean) -> Unit = {},
+    customBgColorArgb: Int = 0xFF1B1B1B.toInt(),
+    onCustomBgColorArgbChange: (Int) -> Unit = {},
+    useCustomTextColor: Boolean = false,
+    onUseCustomTextColorChange: (Boolean) -> Unit = {},
+    customTextColorArgb: Int = 0xFFEDEDED.toInt(),
+    onCustomTextColorArgbChange: (Int) -> Unit = {},
+    useCustomButtonColor: Boolean = false,
+    onUseCustomButtonColorChange: (Boolean) -> Unit = {},
+    customButtonColorArgb: Int = 0xFF6750A4.toInt(),
+    onCustomButtonColorArgbChange: (Int) -> Unit = {},
     booksTabEnabled: Boolean,
     onBooksTabEnabledChange: (Boolean) -> Unit,
     animeTabEnabled: Boolean,
@@ -90,8 +120,8 @@ fun SettingsScreen(
     onMangaTabEnabledChange: (Boolean) -> Unit,
     tvSeriesTabEnabled: Boolean,
     onTvSeriesTabEnabledChange: (Boolean) -> Unit,
-    isGridView: Boolean,
-    onGridViewChange: (Boolean) -> Unit,
+    isGridView: Boolean = false,
+    onGridViewChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -99,6 +129,7 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val mainBackgroundColor = MainBackgroundColor()
     val titleColorBetween = TitleColorBetween()
+    val iconTextColor = IconTextColor()
     val dynamicScheme = MaterialTheme.colorScheme
     val settingsSectionCardColor =
         if (dynamicColorsEnabled) dynamicScheme.secondaryContainer else Color(0xFF5A5568)
@@ -114,8 +145,13 @@ fun SettingsScreen(
     var incrementStepText by remember {
         mutableStateOf(AppSettings.getIncrementStep(context).toString())
     }
+    var searchOtherSources by remember {
+        mutableStateOf(AppSettings.isSearchOtherSourcesEnabled(context))
+    }
+    var showSearchWarningDialog by remember { mutableStateOf(false) }
     var checkingUpdates by remember { mutableStateOf(false) }
     var availableRelease by remember { mutableStateOf<com.rn.library.update.GitHubRelease?>(null) }
+    var activeSettingsColorPicker by remember { mutableStateOf<SettingsColorTarget?>(null) }
     val scrollState = rememberScrollState()
     BackHandler(onBack = onBack)
 
@@ -128,7 +164,7 @@ fun SettingsScreen(
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = stringResource(R.string.cancel),
-                tint = titleColorBetween
+                tint = iconTextColor
             )
         }
         Column(
@@ -155,9 +191,9 @@ fun SettingsScreen(
                                 repository.recompressAllCovers(context)
                             }
                             val message = if (total > 0) {
-                                "Оптимизировано обложек: $success из $total"
+                                context.getString(R.string.covers_optimized_summary, success, total)
                             } else {
-                                "Обложки не найдены"
+                                context.getString(R.string.covers_not_found)
                             }
                             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                         }
@@ -215,73 +251,127 @@ fun SettingsScreen(
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold
                     )
+
+                    // Material You switch row
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(settingsInsetSurfaceColor)
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = stringResource(R.string.dynamic_color_material_you),
-                            color = settingsCardTextColor,
-                            fontSize = 16.sp
-                        )
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.dynamic_color_material_you),
+                                color = settingsCardTextColor,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                         Switch(
                             checked = dynamicColorsEnabled,
-                            onCheckedChange = onDynamicColorsEnabledChange,
+                            onCheckedChange = { enabled ->
+                                onDynamicColorsEnabledChange(enabled)
+                                AppSettings.setDynamicColorsEnabled(context, enabled)
+                            },
                             colors = switchColors(currentTheme, dynamicColorsEnabled)
                         )
                     }
+
+                    Text(
+                        text = stringResource(R.string.custom_colors),
+                        color = settingsCardTextColor.copy(alpha = 0.7f),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+
+                    // 1. Цвет иконок
+                    SettingsColorSettingRow(
+                        label = stringResource(R.string.icon_color_title),
+                        currentColorArgb = customIconColorArgb,
+                        isEnabled = !dynamicColorsEnabled,
+                        backgroundColor = settingsInsetSurfaceColor,
+                        textColor = settingsCardTextColor,
+                        onClick = { activeSettingsColorPicker = SettingsColorTarget.ICONS }
+                    )
+
+                    // 2. Цвет текста
+                    SettingsColorSettingRow(
+                        label = stringResource(R.string.text_color_title),
+                        currentColorArgb = customTextColorArgb,
+                        isEnabled = !dynamicColorsEnabled,
+                        backgroundColor = settingsInsetSurfaceColor,
+                        textColor = settingsCardTextColor,
+                        onClick = { activeSettingsColorPicker = SettingsColorTarget.TEXT }
+                    )
+
+                    // 3. Цвет статистики
+                    SettingsColorSettingRow(
+                        label = stringResource(R.string.stats_color_title),
+                        currentColorArgb = customStatsArgb,
+                        isEnabled = !dynamicColorsEnabled,
+                        backgroundColor = settingsInsetSurfaceColor,
+                        textColor = settingsCardTextColor,
+                        onClick = { activeSettingsColorPicker = SettingsColorTarget.STATS }
+                    )
+
+                    // 4. Цвет кнопок
+                    SettingsColorSettingRow(
+                        label = stringResource(R.string.button_color_title),
+                        currentColorArgb = customButtonColorArgb,
+                        isEnabled = !dynamicColorsEnabled,
+                        backgroundColor = settingsInsetSurfaceColor,
+                        textColor = settingsCardTextColor,
+                        onClick = { activeSettingsColorPicker = SettingsColorTarget.BUTTONS }
+                    )
+
+                    // Сбросить по умолчанию
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.Start,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = stringResource(R.string.use_custom_accent),
-                            color = settingsCardTextColor,
-                            fontSize = 16.sp
-                        )
-                        Switch(
-                            checked = useCustomAccent,
-                            onCheckedChange = onUseCustomAccentChange,
-                            colors = switchColors(currentTheme, dynamicColorsEnabled)
-                        )
-                    }
-                    if (useCustomAccent) {
-                        HsvColorPicker(
-                            colorArgb = customAccentArgb,
-                            onColorArgbChange = onCustomAccentArgbChange,
-                            labelHue = stringResource(R.string.color_picker_hue),
-                            labelSaturation = stringResource(R.string.color_picker_saturation),
-                            labelValue = stringResource(R.string.color_picker_value),
-                            hexInputLabel = stringResource(R.string.color_hex_code)
-                        )
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = stringResource(R.string.use_custom_stats_color),
-                            color = settingsCardTextColor,
-                            fontSize = 16.sp
-                        )
-                        Switch(
-                            checked = useCustomStatsColor,
-                            onCheckedChange = onUseCustomStatsColorChange,
-                            colors = switchColors(currentTheme, dynamicColorsEnabled)
-                        )
-                    }
-                    if (useCustomStatsColor) {
-                        HsvColorPicker(
-                            colorArgb = customStatsArgb,
-                            onColorArgbChange = onCustomStatsArgbChange,
-                            labelHue = stringResource(R.string.color_picker_hue),
-                            labelSaturation = stringResource(R.string.color_picker_saturation),
-                            labelValue = stringResource(R.string.color_picker_value),
-                            hexInputLabel = stringResource(R.string.color_hex_code)
-                        )
+                        TextButton(
+                            onClick = {
+                                onUseCustomIconColorChange(false)
+                                onCustomIconColorChange(0xFFEAEAEA.toInt())
+                                AppSettings.setUseCustomIconColor(context, false)
+                                AppSettings.setCustomIconColorArgb(context, 0xFFEAEAEA.toInt())
+
+                                onUseCustomTextColorChange(false)
+                                onCustomTextColorArgbChange(0xFFEDEDED.toInt())
+                                AppSettings.setUseCustomTextColor(context, false)
+                                AppSettings.setCustomTextColorArgb(context, 0xFFEDEDED.toInt())
+
+                                onUseCustomStatsColorChange(false)
+                                onCustomStatsArgbChange(0xFF7C4DFF.toInt())
+                                AppSettings.setUseCustomStatsColor(context, false)
+                                AppSettings.setCustomStatsArgb(context, 0xFF7C4DFF.toInt())
+
+                                onUseCustomButtonColorChange(false)
+                                onCustomButtonColorArgbChange(0xFF6750A4.toInt())
+                                AppSettings.setUseCustomButtonColor(context, false)
+                                AppSettings.setCustomButtonColorArgb(context, 0xFF6750A4.toInt())
+
+                                onUseCustomAccentChange(false)
+                                onCustomAccentArgbChange(0xFF6750A4.toInt())
+                                AppSettings.setUseCustomAccent(context, false)
+                                AppSettings.setCustomAccentArgb(context, 0xFF6750A4.toInt())
+                            }
+                        ) {
+                            Text(
+                                text = stringResource(R.string.reset_to_default),
+                                color = Color(0xFFFF9E9E),
+                                fontSize = 13.sp
+                            )
+                        }
                     }
                 }
             }
@@ -338,16 +428,46 @@ fun SettingsScreen(
                             }
                             DropdownMenu(
                                 expanded = languageMenuExpanded,
-                                onDismissRequest = { languageMenuExpanded = false }
+                                onDismissRequest = { languageMenuExpanded = false },
+                                shape = RoundedCornerShape(14.dp),
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                shadowElevation = 6.dp,
+                                tonalElevation = 2.dp,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                             ) {
-                                languages.forEach { (lang, label) ->
-                                    DropdownMenuItem(
-                                        text = { Text(label) },
-                                        onClick = {
-                                            onLanguageChange(lang)
-                                            languageMenuExpanded = false
+                                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        val accentColor = MaterialTheme.colorScheme.primary
+                                        languages.forEach { (lang, label) ->
+                                            val isSelected = currentLanguage == lang
+                                            AssistChip(
+                                                onClick = {
+                                                    onLanguageChange(lang)
+                                                    languageMenuExpanded = false
+                                                },
+                                                label = {
+                                                    Text(
+                                                        text = label,
+                                                        color = if (isSelected) accentColor else MaterialTheme.colorScheme.onSurface,
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                    )
+                                                },
+                                                colors = AssistChipDefaults.assistChipColors(
+                                                    containerColor = Color.Transparent,
+                                                    labelColor = if (isSelected) accentColor else MaterialTheme.colorScheme.onSurface
+                                                ),
+                                                border = AssistChipDefaults.assistChipBorder(
+                                                    borderColor = if (isSelected) accentColor else accentColor.copy(alpha = 0.5f),
+                                                    borderWidth = if (isSelected) 2.dp else 1.dp,
+                                                    enabled = true
+                                                ),
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
                                         }
-                                    )
+                                    }
                                 }
                             }
                         }
@@ -399,10 +519,11 @@ fun SettingsScreen(
                                 focusedContainerColor = settingsInsetSurfaceColor,
                                 unfocusedContainerColor = settingsInsetSurfaceColor,
                                 disabledContainerColor = settingsInsetSurfaceColor,
-                                focusedIndicatorColor = settingsCardTextColor.copy(alpha = 0.7f),
+                                focusedIndicatorColor = FieldHighlightColor(),
                                 unfocusedIndicatorColor = settingsCardTextColor.copy(alpha = 0.4f),
                                 focusedTextColor = settingsCardTextColor,
-                                unfocusedTextColor = settingsCardTextColor
+                                unfocusedTextColor = settingsCardTextColor,
+                                cursorColor = FieldHighlightColor()
                             )
                     )
                 }
@@ -416,20 +537,33 @@ fun SettingsScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = stringResource(R.string.grid_view_mode),
+                        text = stringResource(R.string.search_other_sources_toggle),
                         color = settingsCardTextColor,
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
                     )
                     Switch(
-                        checked = isGridView,
-                        onCheckedChange = onGridViewChange,
-                        colors = switchColors(currentTheme, dynamicColorsEnabled)
+                        checked = searchOtherSources,
+                        onCheckedChange = { isChecked ->
+                            if (isChecked) {
+                                showSearchWarningDialog = true
+                            } else {
+                                searchOtherSources = false
+                                AppSettings.setSearchOtherSourcesEnabled(context, false)
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                            checkedTrackColor = FieldHighlightColor(),
+                            uncheckedThumbColor = settingsCardTextColor.copy(alpha = 0.6f),
+                            uncheckedTrackColor = settingsInsetSurfaceColor
+                        )
                     )
                 }
             }
@@ -527,6 +661,100 @@ fun SettingsScreen(
                 }
             )
         }
+
+        if (showSearchWarningDialog) {
+            val scheme = MaterialTheme.colorScheme
+            AlertDialog(
+                onDismissRequest = { showSearchWarningDialog = false },
+                title = { Text(stringResource(R.string.search_other_sources_warning_title)) },
+                text = { Text(stringResource(R.string.search_other_sources_warning_message)) },
+                containerColor = scheme.surface,
+                titleContentColor = scheme.onSurface,
+                textContentColor = scheme.onSurfaceVariant,
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            searchOtherSources = true
+                            AppSettings.setSearchOtherSourcesEnabled(context, true)
+                            showSearchWarningDialog = false
+                        },
+                        colors = ButtonDefaults.textButtonColors(
+                            containerColor = AppButtonColor(),
+                            contentColor = scheme.onPrimary
+                        )
+                    ) {
+                        Text(stringResource(R.string.search_other_sources_enable))
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { showSearchWarningDialog = false },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = scheme.onSurfaceVariant
+                        )
+                    ) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
+            )
+        }
+
+        activeSettingsColorPicker?.let { target ->
+            val titleRes = when (target) {
+                SettingsColorTarget.ICONS -> R.string.icon_color_title
+                SettingsColorTarget.TEXT -> R.string.text_color_title
+                SettingsColorTarget.STATS -> R.string.stats_color_title
+                SettingsColorTarget.BUTTONS -> R.string.button_color_title
+            }
+            val initialArgb = when (target) {
+                SettingsColorTarget.ICONS -> customIconColorArgb
+                SettingsColorTarget.TEXT -> customTextColorArgb
+                SettingsColorTarget.STATS -> customStatsArgb
+                SettingsColorTarget.BUTTONS -> customButtonColorArgb
+            }
+            val dialogBg = dynamicScheme.surface
+            val dialogContentColor = if (useCustomTextColor && !dynamicColorsEnabled) {
+                Color(customTextColorArgb)
+            } else {
+                dynamicScheme.onSurface
+            }
+
+            ColorPickerDialog(
+                title = stringResource(titleRes),
+                initialColorArgb = initialArgb,
+                backgroundColor = dialogBg,
+                contentColor = dialogContentColor,
+                onDismiss = { activeSettingsColorPicker = null },
+                onColorSelected = { newArgb ->
+                    when (target) {
+                        SettingsColorTarget.ICONS -> {
+                            onUseCustomIconColorChange(true)
+                            onCustomIconColorChange(newArgb)
+                            AppSettings.setUseCustomIconColor(context, true)
+                            AppSettings.setCustomIconColorArgb(context, newArgb)
+                        }
+                        SettingsColorTarget.TEXT -> {
+                            onUseCustomTextColorChange(true)
+                            onCustomTextColorArgbChange(newArgb)
+                            AppSettings.setUseCustomTextColor(context, true)
+                            AppSettings.setCustomTextColorArgb(context, newArgb)
+                        }
+                        SettingsColorTarget.STATS -> {
+                            onUseCustomStatsColorChange(true)
+                            onCustomStatsArgbChange(newArgb)
+                            AppSettings.setUseCustomStatsColor(context, true)
+                            AppSettings.setCustomStatsArgb(context, newArgb)
+                        }
+                        SettingsColorTarget.BUTTONS -> {
+                            onUseCustomButtonColorChange(true)
+                            onCustomButtonColorArgbChange(newArgb)
+                            AppSettings.setUseCustomButtonColor(context, true)
+                            AppSettings.setCustomButtonColorArgb(context, newArgb)
+                        }
+                    }
+                }
+            )
+        }
     }
 }
 
@@ -576,3 +804,56 @@ private fun switchColors(currentTheme: AppTheme, dynamicColorsEnabled: Boolean) 
         Color(0xFFE0E0E0)
     }
 )
+
+private enum class SettingsColorTarget {
+    ICONS,
+    TEXT,
+    STATS,
+    BUTTONS
+}
+
+@Composable
+private fun SettingsColorSettingRow(
+    label: String,
+    currentColorArgb: Int,
+    isEnabled: Boolean,
+    backgroundColor: Color,
+    textColor: Color,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(backgroundColor)
+            .clickable(enabled = isEnabled, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            color = if (isEnabled) textColor else textColor.copy(alpha = 0.4f),
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium
+        )
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(Color(currentColorArgb))
+                    .border(1.dp, textColor.copy(alpha = 0.35f), CircleShape)
+            )
+
+            RainbowColorWheelButton(
+                onClick = onClick,
+                size = 36.dp
+            )
+        }
+    }
+}

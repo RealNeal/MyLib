@@ -69,11 +69,26 @@ data class Work(
     val note: String? = null,             // Small user note
     val link: String? = null,             // Primary link to the work
     val link2: String? = null,            // Secondary link to the work
+    val links: List<String> = emptyList(), // All links to the work
     val author: String? = null,           // Author of the work
     val updatedAt: Long? = null,          // Last update timestamp (epoch millis)
     val genres: List<String> = emptyList(), // Genres of the work
     val tags: List<String> = emptyList()    // Tags of the work
 )
+
+fun Work.allLinks(): List<String> {
+    val result = mutableListOf<String>()
+    if (links.isNotEmpty()) {
+        result.addAll(links)
+    }
+    link?.takeIf { it.isNotBlank() }?.split("\n", ";", "||")?.map { it.trim() }?.filter { it.isNotEmpty() }?.let {
+        for (l in it) if (!result.contains(l)) result.add(l)
+    }
+    link2?.takeIf { it.isNotBlank() }?.split("\n", ";", "||")?.map { it.trim() }?.filter { it.isNotEmpty() }?.let {
+        for (l in it) if (!result.contains(l)) result.add(l)
+    }
+    return result.distinct()
+}
 
 data class ReadingPeriod(
     val startDate: String,

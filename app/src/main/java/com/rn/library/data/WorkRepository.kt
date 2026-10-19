@@ -11,18 +11,23 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
 import java.util.UUID
 import java.util.zip.ZipFile
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.rn.library.parser.ParserUtils
 
 data class BookImportResult(
     val work: Work? = null,
     val errorMessage: String? = null
 )
 
-class WorkRepository(private val context: Context) {
+class WorkRepository(val context: Context) {
     private val activityDeltaLog = ActivityDeltaLog(context)
 
     private data class TreeDocument(
@@ -64,6 +69,85 @@ class WorkRepository(private val context: Context) {
     /** Копирует обложку из пикера в каталог приложения и возвращает абсолютный путь к файлу. */
     fun persistCoverFromPicker(uri: Uri, workId: String, index: Int): String? =
         saveCoverToStorage(uri, workId, index)
+
+    /** Скачивает обложку по URL и сохраняет в каталог covers/, возвращая абсолютный путь. */
+    suspend fun downloadCoverToStorage(imageUrl: String, workId: String, index: Int): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val baseDir = context.getExternalFilesDir(null) ?: context.filesDir
+                val coversDir = File(baseDir, "covers").apply { mkdirs() }
+                val outputFile = File(coversDir, "${workId}_$index.jpg")
+
+                val upgradedUrl = ParserUtils.upgradeCoverUrl(imageUrl)
+                val urlsToTry = if (!upgradedUrl.isNullOrBlank() && upgradedUrl != imageUrl) {
+                    listOf(upgradedUrl, imageUrl)
+                } else {
+                    listOf(imageUrl)
+                }
+
+                for (targetUrl in urlsToTry) {
+                    var currentUrl = targetUrl
+                    var redirects = 0
+                    var downloaded = false
+
+                    while (redirects < 5) {
+                        val connection = URL(currentUrl).openConnection() as HttpURLConnection
+                        val referer = when {
+                            currentUrl.contains("cdnlibs.org") || currentUrl.contains("mangalib") -> "https://mangalib.me/"
+                            currentUrl.contains("ranobelib") -> "https://ranobelib.me/"
+                            currentUrl.contains("animelib") -> "https://animelib.me/"
+                            currentUrl.contains("anixmirai") || currentUrl.contains("anixart") -> "https://anixart.tv/"
+                            currentUrl.contains("remanga.org") -> "https://remanga.org/"
+                            currentUrl.contains("shikimori") -> "https://shikimori.one/"
+                            currentUrl.contains("wtr-lab") -> "https://wtr-lab.com/"
+                            currentUrl.contains("ranobehub") -> "https://ranobehub.org/"
+                            currentUrl.contains("ranobes") -> "https://ranobes.net/"
+                            currentUrl.contains("royalroad") -> "https://www.royalroad.com/"
+                            currentUrl.contains("scribblehub") -> "https://www.scribblehub.com/"
+                            currentUrl.contains("rulate") || currentUrl.contains("tl.rulate.ru") -> "https://tl.rulate.ru/"
+                            currentUrl.contains("media-amazon.com") || currentUrl.contains("imdb.com") -> "https://www.imdb.com/"
+                            currentUrl.contains("mangabuff") -> "https://mangabuff.ru/"
+                            else -> null
+                        }
+                        if (referer != null) {
+                            connection.setRequestProperty("Referer", referer)
+                        }
+                        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        connection.setRequestProperty("Accept", "image/webp,image/apng,image/*,*/*;q=0.8")
+                        connection.connectTimeout = 12000
+                        connection.readTimeout = 20000
+                        connection.instanceFollowRedirects = true
+                        val code = connection.responseCode
+                        if (code in 300..399) {
+                            val newLoc = connection.getHeaderField("Location") ?: break
+                            currentUrl = if (newLoc.startsWith("http")) newLoc else URL(URL(currentUrl), newLoc).toString()
+                            redirects++
+                            continue
+                        }
+                        if (code in 200..299) {
+                            connection.inputStream.use { input ->
+                                FileOutputStream(outputFile).use { output ->
+                                    input.copyTo(output)
+                                }
+                            }
+                            downloaded = true
+                            break
+                        } else {
+                            break
+                        }
+                    }
+
+                    if (downloaded && outputFile.exists() && outputFile.length() > 0) {
+                        optimizeCoverFile(outputFile)
+                        return@withContext outputFile.absolutePath
+                    }
+                }
+                null
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
+        }
 
     /**
      * Заменяет временные content:// URI на файлы в каталоге covers/.
@@ -328,7 +412,7 @@ class WorkRepository(private val context: Context) {
         work.seasons?.let {
             sb.appendLine("seasons: $it")
         }
-        work.dateRead?.let {
+        work.dateRead?.takeIf { it.isNotBlank() && it != "null" }?.let {
             sb.appendLine("dateRead: $it")
         }
         if (work.rereadDates.isNotEmpty()) {
@@ -373,11 +457,15 @@ class WorkRepository(private val context: Context) {
         work.note?.let {
             sb.appendLine("note: ${escapeMarkdown(it)}")
         }
-        work.link?.let {
+        val allLinks = work.allLinks()
+        if (allLinks.isNotEmpty()) {
+            sb.appendLine("links: ${encodeList(allLinks)}")
+        }
+        allLinks.getOrNull(0)?.let {
             // Не применяем escapeMarkdown к ссылкам, чтобы избежать проблем с обратными слэшами
             sb.appendLine("link: $it")
         }
-        work.link2?.let {
+        allLinks.getOrNull(1)?.let {
             // Вторая ссылка хранится отдельно
             sb.appendLine("link2: $it")
         }
@@ -449,14 +537,22 @@ class WorkRepository(private val context: Context) {
             val abandonedProgress = properties["abandonedProgress"]?.toIntOrNull()
             val progress = properties["progress"]?.toDoubleOrNull()
             val otherTitle = properties["otherTitle"]
-            val dateRead = properties["dateRead"]
+            val dateRead = properties["dateRead"]?.takeIf { it.isNotBlank() && it != "null" }
             val rereadDates = decodeList(properties["rereadDates"])
             val readingPeriods = decodePeriods(properties["readingPeriods"])
             val unitProgress = decodeUnitProgress(properties["unitProgress"])
             val activeUnitIndex = properties["activeUnitIndex"]?.toIntOrNull()
             val note = properties["note"]
-            val link = properties["link"]
-            val link2 = properties["link2"]
+            val decodedLinks = decodeList(properties["links"])
+            val fallbackLink = properties["link"]?.takeIf { it.isNotBlank() }
+            val fallbackLink2 = properties["link2"]?.takeIf { it.isNotBlank() }
+            val links = if (decodedLinks.isNotEmpty()) {
+                decodedLinks
+            } else {
+                listOfNotNull(fallbackLink, fallbackLink2)
+            }
+            val link = links.getOrNull(0) ?: fallbackLink
+            val link2 = links.getOrNull(1) ?: fallbackLink2
             val author = properties["author"]
             val genres = decodeList(properties["genres"])
             val tags = decodeList(properties["tags"])
@@ -495,6 +591,7 @@ class WorkRepository(private val context: Context) {
                 note = note,
                 link = link,
                 link2 = link2,
+                links = links,
                 author = author,
                 updatedAt = updatedAt,
                 genres = genres,
@@ -1277,6 +1374,71 @@ class WorkRepository(private val context: Context) {
         }
 
         return Pair(successCount, totalCount)
+    }
+
+    /**
+     * Оптимизирует скачанную обложку: масштабирует до оптимальных размеров (макс 1200x1800),
+     * пережимает в чистый JPEG высокого качества (88%), удаляя мусорные метаданные и снижая размер файла.
+     */
+    private fun optimizeCoverFile(
+        file: File,
+        maxWidth: Int = 1200,
+        maxHeight: Int = 1800,
+        quality: Int = 88
+    ): Boolean {
+        return try {
+            if (!file.exists() || file.length() == 0L) return false
+
+            val boundsOptions = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            BitmapFactory.decodeFile(file.absolutePath, boundsOptions)
+            val origW = boundsOptions.outWidth
+            val origH = boundsOptions.outHeight
+            if (origW <= 0 || origH <= 0) return false
+
+            var inSampleSize = 1
+            while ((origW / (inSampleSize * 2) >= maxWidth) || (origH / (inSampleSize * 2) >= maxHeight)) {
+                inSampleSize *= 2
+            }
+
+            val decodeOptions = BitmapFactory.Options().apply {
+                this.inSampleSize = inSampleSize
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            var bitmap = BitmapFactory.decodeFile(file.absolutePath, decodeOptions) ?: return false
+
+            if (bitmap.width > maxWidth || bitmap.height > maxHeight) {
+                val ratio = minOf(maxWidth.toFloat() / bitmap.width, maxHeight.toFloat() / bitmap.height)
+                if (ratio < 1.0f) {
+                    val targetW = (bitmap.width * ratio).toInt().coerceAtLeast(1)
+                    val targetH = (bitmap.height * ratio).toInt().coerceAtLeast(1)
+                    val scaled = Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
+                    if (scaled != bitmap) {
+                        bitmap.recycle()
+                        bitmap = scaled
+                    }
+                }
+            }
+
+            val tempFile = File(file.parentFile, "${file.name}.tmp")
+            FileOutputStream(tempFile).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+            }
+            bitmap.recycle()
+
+            if (tempFile.exists() && tempFile.length() > 0) {
+                file.delete()
+                tempFile.renameTo(file)
+                true
+            } else {
+                tempFile.delete()
+                false
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
     }
 
     /**

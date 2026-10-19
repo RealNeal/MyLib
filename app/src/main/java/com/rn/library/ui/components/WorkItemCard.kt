@@ -60,6 +60,8 @@ fun WorkItemCard(
     val mainBackgroundColor = MainBackgroundColor()
     val iconTextColor = IconTextColor()
     val workTitleColor = WorkTitleColor()
+    val isDarkBg = (mainBackgroundColor.red * 0.2126f + mainBackgroundColor.green * 0.7152f + mainBackgroundColor.blue * 0.0722f) < 0.5f
+    val secondaryTextColor = if (isDarkBg) Color.White else Color.Black
 
     Card(
         modifier = modifier
@@ -160,7 +162,7 @@ fun WorkItemCard(
                         if (!isLongMeta) {
                             Text(
                                 text = metaCombined,
-                                color = iconTextColor,
+                                color = secondaryTextColor,
                                 fontSize = 12.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -169,7 +171,7 @@ fun WorkItemCard(
                             workItem.metaLine1?.takeIf { it.isNotBlank() }?.let { line ->
                                 Text(
                                     text = line,
-                                    color = iconTextColor,
+                                    color = secondaryTextColor,
                                     fontSize = 12.sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -178,7 +180,7 @@ fun WorkItemCard(
                             workItem.metaLine2?.takeIf { it.isNotBlank() }?.let { line ->
                                 Text(
                                     text = line,
-                                    color = iconTextColor,
+                                    color = secondaryTextColor,
                                     fontSize = 12.sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -202,7 +204,7 @@ fun WorkItemCard(
                 // Description
                 Text(
                     text = workItem.description,
-                    color = iconTextColor,
+                    color = secondaryTextColor,
                     fontSize = 12.sp,
                     maxLines = 3,
                     lineHeight = 16.sp
@@ -222,15 +224,7 @@ fun WorkItemGridCard(
 ) {
     val mainBackgroundColor = MainBackgroundColor()
     val context = LocalContext.current
-    val titleColor = if (dynamicColorsEnabled) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            dynamicLightColorScheme(context).secondaryContainer
-        } else {
-            TabCircleColor()
-        }
-    } else {
-        Color.White
-    }
+    val titleColor = WorkTitleColor()
 
     Card(
         modifier = modifier

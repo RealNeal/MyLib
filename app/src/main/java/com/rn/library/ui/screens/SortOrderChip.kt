@@ -13,7 +13,6 @@ import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
@@ -41,6 +40,7 @@ fun workStatusColor(status: WorkStatus): Color = when (status) {
     WorkStatus.READ, WorkStatus.WATCHED -> Color(0xFF79C77C)          // rgb(121, 199, 124)
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SortOrderChip(
     sortOrder: SortOrder,
@@ -98,7 +98,11 @@ fun SortOrderChip(
         DropdownMenu(
             expanded = menuExpanded,
             onDismissRequest = { menuExpanded = false },
-            modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+            shape = RoundedCornerShape(14.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            shadowElevation = 6.dp,
+            tonalElevation = 2.dp,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
         ) {
             val sortOptions = listOf(
                 SortOrder.RECENT to stringResource(R.string.sort_recent),
@@ -110,21 +114,38 @@ fun SortOrderChip(
                 SortOrder.TAG to stringResource(R.string.sort_by_tag)
             )
 
-            sortOptions.forEach { (option, optionLabel) ->
-                val isSelected = sortOrder == option
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            text = optionLabel,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isSelected) tabColor else MaterialTheme.colorScheme.onSurface
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    sortOptions.forEach { (option, optionLabel) ->
+                        val isSelected = sortOrder == option
+                        AssistChip(
+                            onClick = {
+                                onSortOrderChange(option)
+                                menuExpanded = false
+                            },
+                            label = {
+                                Text(
+                                    text = optionLabel,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) tabColor else MaterialTheme.colorScheme.onSurface
+                                )
+                            },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = Color.Transparent,
+                                labelColor = if (isSelected) tabColor else MaterialTheme.colorScheme.onSurface
+                            ),
+                            border = AssistChipDefaults.assistChipBorder(
+                                borderColor = if (isSelected) tabColor else tabColor.copy(alpha = 0.5f),
+                                borderWidth = if (isSelected) 2.dp else 1.dp,
+                                enabled = true
+                            ),
+                            modifier = Modifier.fillMaxWidth()
                         )
-                    },
-                    onClick = {
-                        onSortOrderChange(option)
-                        menuExpanded = false
                     }
-                )
+                }
             }
         }
     }

@@ -76,6 +76,24 @@ class MainActivity : AppCompatActivity() {
             var customStatsArgb by remember {
                 mutableStateOf(AppSettings.getCustomStatsArgb(this))
             }
+            var useCustomIconColor by remember {
+                mutableStateOf(AppSettings.isUseCustomIconColor(this))
+            }
+            var customIconColorArgb by remember {
+                mutableStateOf(AppSettings.getCustomIconColorArgb(this))
+            }
+            var useCustomTextColor by remember {
+                mutableStateOf(AppSettings.isUseCustomTextColor(this))
+            }
+            var customTextColorArgb by remember {
+                mutableStateOf(AppSettings.getCustomTextColorArgb(this))
+            }
+            var useCustomButtonColor by remember {
+                mutableStateOf(AppSettings.isUseCustomButtonColor(this))
+            }
+            var customButtonColorArgb by remember {
+                mutableStateOf(AppSettings.getCustomButtonColorArgb(this))
+            }
             val view = LocalView.current
 
             ProvideAppLanguage(currentLanguage) {
@@ -86,7 +104,13 @@ class MainActivity : AppCompatActivity() {
                     useCustomAccent = useCustomAccent,
                     customAccentArgb = customAccentArgb,
                     useCustomStatsColor = useCustomStatsColor,
-                    customStatsArgb = customStatsArgb
+                    customStatsArgb = customStatsArgb,
+                    useCustomIconColor = useCustomIconColor,
+                    customIconColorArgb = customIconColorArgb,
+                    useCustomTextColor = useCustomTextColor,
+                    customTextColorArgb = customTextColorArgb,
+                    useCustomButtonColor = useCustomButtonColor,
+                    customButtonColorArgb = customButtonColorArgb
                 ) {
                     DisposableEffect(currentTheme) {
                         if (!view.isInEditMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -132,6 +156,36 @@ class MainActivity : AppCompatActivity() {
                         onCustomStatsArgbChange = { argb ->
                             customStatsArgb = argb
                             AppSettings.setCustomStatsArgb(this, argb)
+                        },
+                        useCustomIconColor = useCustomIconColor,
+                        onUseCustomIconColorChange = { enabled ->
+                            useCustomIconColor = enabled
+                            AppSettings.setUseCustomIconColor(this, enabled)
+                        },
+                        customIconColorArgb = customIconColorArgb,
+                        onCustomIconColorChange = { argb ->
+                            customIconColorArgb = argb
+                            AppSettings.setCustomIconColorArgb(this, argb)
+                        },
+                        useCustomTextColor = useCustomTextColor,
+                        onUseCustomTextColorChange = { enabled ->
+                            useCustomTextColor = enabled
+                            AppSettings.setUseCustomTextColor(this, enabled)
+                        },
+                        customTextColorArgb = customTextColorArgb,
+                        onCustomTextColorArgbChange = { argb ->
+                            customTextColorArgb = argb
+                            AppSettings.setCustomTextColorArgb(this, argb)
+                        },
+                        useCustomButtonColor = useCustomButtonColor,
+                        onUseCustomButtonColorChange = { enabled ->
+                            useCustomButtonColor = enabled
+                            AppSettings.setUseCustomButtonColor(this, enabled)
+                        },
+                        customButtonColorArgb = customButtonColorArgb,
+                        onCustomButtonColorArgbChange = { argb ->
+                            customButtonColorArgb = argb
+                            AppSettings.setCustomButtonColorArgb(this, argb)
                         }
                     )
 

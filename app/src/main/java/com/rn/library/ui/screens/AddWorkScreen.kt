@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
@@ -22,14 +23,28 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.unit.DpOffset
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
+import android.widget.Toast
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material3.*
 import androidx.compose.material3.Text
@@ -37,21 +52,36 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import com.rn.library.R
 import com.rn.library.data.*
+import com.rn.library.parser.GenreTagTranslator
+import com.rn.library.parser.MediaSource
+import com.rn.library.parser.NetworkParserManager
+import com.rn.library.parser.ParserUtils
+import com.rn.library.parser.ShikimoriFilterType
+import com.rn.library.ui.Language
+import com.rn.library.ui.components.ChipsFlowRow
+import com.rn.library.ui.components.NetworkSearchDialog
 import com.rn.library.ui.components.ScrollIsolatedMultilineField
+import com.rn.library.ui.components.ShikimoriSearchDialog
 import com.rn.library.ui.components.UnitProgressEditor
 import com.rn.library.ui.components.buildDefaultUnits
+import com.rn.library.ui.theme.IconTextColor
 import com.rn.library.ui.theme.MainBackgroundColor
 import com.rn.library.ui.theme.SearchBarColor
 import com.rn.library.ui.theme.TitleColorBetween
+import com.rn.library.ui.theme.AppButtonColor
+import com.rn.library.ui.theme.FieldHighlightColor
+import com.rn.library.ui.theme.ParserIconColor
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -72,31 +102,39 @@ fun formatNumberForDisplay(value: Double?): String {
 
 // Преобразование альтернативных названий из формата сохранения в многострочный для отображения
 fun formatAlternativeTitlesForDisplay(input: String?): String {
-    return if (input.isNullOrEmpty()) {
-        ""
+    if (input.isNullOrEmpty() || input.trim().equals("null", ignoreCase = true)) {
+        return ""
     } else {
-        input.split(";")
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
+        return input.split(";")
+            .map { ParserUtils.cleanText(it) }
+            .filter { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
             .joinToString("\n")
     }
 }
 
-fun formatLinksForDisplay(link1: String?, link2: String?): String {
+fun parseLinksList(input: String): List<String> {
+    return input.split("\n", ";")
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinct()
+}
+
+fun formatLinksForDisplay(link1: String?, link2: String?, linksList: List<String> = emptyList()): String {
     val list = mutableListOf<String>()
-    link1?.takeIf { it.isNotBlank() }?.split("\n", ";")?.map { it.trim() }?.filter { it.isNotEmpty() }?.let { list.addAll(it) }
-    link2?.takeIf { it.isNotBlank() }?.split("\n", ";")?.map { it.trim() }?.filter { it.isNotEmpty() }?.let { list.addAll(it) }
+    list.addAll(linksList)
+    link1?.takeIf { it.isNotBlank() }?.split("\n", ";", "||")?.map { it.trim() }?.filter { it.isNotEmpty() }?.let {
+        for (l in it) if (!list.contains(l)) list.add(l)
+    }
+    link2?.takeIf { it.isNotBlank() }?.split("\n", ";", "||")?.map { it.trim() }?.filter { it.isNotEmpty() }?.let {
+        for (l in it) if (!list.contains(l)) list.add(l)
+    }
     return list.distinct().joinToString("\n")
 }
 
 fun parseLinksForSave(input: String): Pair<String?, String?> {
-    val links = input.split("\n", ";")
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-        .distinct()
-
+    val links = parseLinksList(input)
     val first = links.getOrNull(0)
-    val second = if (links.size > 1) links.drop(1).joinToString("\n") else null
+    val second = links.getOrNull(1)
     return Pair(first, second)
 }
 
@@ -110,7 +148,10 @@ fun AddWorkScreen(
     val bg = MainBackgroundColor()
     val fieldBg = SearchBarColor()
     val text = TitleColorBetween()
-    val accentColor = MaterialTheme.colorScheme.primary
+    val iconColor = IconTextColor()
+    val parserIconColor = ParserIconColor()
+    val fieldHighlight = FieldHighlightColor()
+    val accentColor = fieldHighlight
     val fieldColors = TextFieldDefaults.colors(
         focusedContainerColor = fieldBg,
         unfocusedContainerColor = fieldBg,
@@ -119,12 +160,12 @@ fun AddWorkScreen(
         focusedTextColor = text,
         unfocusedTextColor = text,
         disabledTextColor = text,
-        focusedLabelColor = accentColor,
+        focusedLabelColor = fieldHighlight,
         unfocusedLabelColor = text.copy(alpha = 0.7f),
         focusedPlaceholderColor = text.copy(alpha = 0.5f),
         unfocusedPlaceholderColor = text.copy(alpha = 0.5f),
-        cursorColor = accentColor,
-        focusedIndicatorColor = accentColor,
+        cursorColor = fieldHighlight,
+        focusedIndicatorColor = fieldHighlight,
         unfocusedIndicatorColor = text.copy(alpha = 0.3f)
     )
     val context = LocalContext.current
@@ -132,9 +173,12 @@ fun AddWorkScreen(
     val stableWorkId = remember(work?.id) { work?.id ?: UUID.randomUUID().toString() }
 
     // Основные поля
-    var title by remember(work?.title) { mutableStateOf(work?.title ?: "") }
-    var alternativeTitles by remember(work?.otherTitle) { mutableStateOf(formatAlternativeTitlesForDisplay(work?.otherTitle) ?: "") }
-    var author by remember(work?.author) { mutableStateOf(work?.author ?: "") }
+    var title by remember(work?.title) { mutableStateOf(ParserUtils.cleanText(work?.title)) }
+    var alternativeTitles by remember(work?.otherTitle) { mutableStateOf(formatAlternativeTitlesForDisplay(work?.otherTitle)) }
+    var author by remember(work?.author) {
+        val a = work?.author?.trim()
+        mutableStateOf(if (a.isNullOrBlank() || a.equals("null", ignoreCase = true)) "" else ParserUtils.cleanText(a))
+    }
     var description by remember(work?.description) { mutableStateOf(work?.description ?: "") }
     var type by remember(work?.type) { mutableStateOf(work?.type ?: WorkType.BOOK) }
     var status by remember(work?.status) { mutableStateOf(work?.status ?: WorkStatus.IN_PLANS) }
@@ -172,30 +216,54 @@ fun AddWorkScreen(
         mutableStateOf(work?.yearPeriod ?: work?.year?.toString().orEmpty())
     }
 
-    // Инициализация дат в формате ДД.ММ.ГГГГ для отображения
+    // Инициализация дат в формате ДДММГГГГ для отображения
     var dateRead by remember(work?.dateRead) {
         mutableStateOf(
             work?.dateRead?.let { date ->
-                val parts = date.split("-")
-                if (parts.size == 3) "${parts[2]}.${parts[1]}.${parts[0]}" else date
+                val clean = date.trim()
+                val parts = clean.split("-")
+                if (parts.size == 3) {
+                    parts[2].padStart(2, '0') + parts[1].padStart(2, '0') + parts[0]
+                } else {
+                    clean.filter { it.isDigit() }.take(8)
+                }
             } ?: ""
         )
     }
     var rereadDatesText by remember(work?.rereadDates) {
         mutableStateOf(formatRereadDatesForDisplay(work?.rereadDates.orEmpty()))
     }
-    var linksText by remember(work?.link, work?.link2) {
-        mutableStateOf(formatLinksForDisplay(work?.link, work?.link2))
+    var linksText by remember(work?.link, work?.link2, work?.links) {
+        mutableStateOf(work?.allLinks()?.joinToString("\n") ?: "")
     }
-    var genres by remember(work?.genres) { mutableStateOf(work?.genres ?: emptyList()) }
-    var tags by remember(work?.tags) { mutableStateOf(work?.tags ?: emptyList()) }
+    var genres by remember(work?.genres) {
+        mutableStateOf(GenreTagTranslator.translateAndNormalizeChips(work?.genres ?: emptyList(), Language.RUSSIAN))
+    }
+    var tags by remember(work?.tags) {
+        mutableStateOf(GenreTagTranslator.translateAndNormalizeChips(work?.tags ?: emptyList(), Language.RUSSIAN))
+    }
     var genreInput by remember { mutableStateOf("") }
     var tagInput by remember { mutableStateOf("") }
+    val defaultGenres = remember {
+        listOf(
+            "Детектив", "Драма", "Игры", "История", "Комедия",
+            "Магия", "Меха", "Мистика", "Музыка", "Повседневность",
+            "Приключения", "Психология", "Романтика", "Сверхъестественное",
+            "Спорт", "Сёнэн", "Сэйнэн", "Сёдзё", "Триллер", "Ужасы",
+            "Фантастика", "Фэнтези", "Школа", "Экшен"
+        )
+    }
     val existingGenres = remember {
-        repository.getAllWorks().flatMap { it.genres }.filter { it.isNotBlank() }.distinct().sorted()
+        GenreTagTranslator.translateAndNormalizeChips(
+            repository.getAllWorks().flatMap { it.genres.orEmpty() } + defaultGenres,
+            Language.RUSSIAN
+        ).sorted()
     }
     val existingTags = remember {
-        repository.getAllWorks().flatMap { it.tags }.filter { it.isNotBlank() }.distinct().sorted()
+        GenreTagTranslator.translateAndNormalizeChips(
+            repository.getAllWorks().flatMap { it.tags.orEmpty() },
+            Language.RUSSIAN
+        ).sorted()
     }
     var note by remember(work?.note) { mutableStateOf(work?.note ?: "") }
 
@@ -205,6 +273,7 @@ fun AddWorkScreen(
     var seasonDropdownExpanded by remember { mutableStateOf(false) }
     var mangaTypeDropdownExpanded by remember { mutableStateOf(false) }
     var seriesTypeDropdownExpanded by remember { mutableStateOf(false) }
+    var showNetworkSearchDialog by remember { mutableStateOf(false) }
 
     fun closeNow() {
         typeDropdownExpanded = false
@@ -216,7 +285,11 @@ fun AddWorkScreen(
     }
 
     // Обработка системной кнопки "Назад"
-    BackHandler { closeNow() }
+    BackHandler(enabled = showNetworkSearchDialog) {
+        showNetworkSearchDialog = false
+        NetworkParserManager.clearCache()
+    }
+    BackHandler(enabled = !showNetworkSearchDialog) { closeNow() }
 
     // Launcher для выбора обложки
     val coverPickerLauncher = rememberLauncherForActivityResult(
@@ -270,7 +343,11 @@ fun AddWorkScreen(
 
     // Форматирование даты для сохранения (только цифры)
     fun formatDateForSave(input: String): String {
-        val digits = input.replace("[^0-9]".toRegex(), "")
+        val trimmed = input.trim()
+        if (trimmed.matches(Regex("^\\d{4}-\\d{2}-\\d{2}$"))) {
+            return trimmed
+        }
+        val digits = trimmed.filter { it.isDigit() }
         if (digits.length >= 8) {
             val day = digits.substring(0, 2)
             val month = digits.substring(2, 4)
@@ -347,7 +424,7 @@ fun AddWorkScreen(
                 .padding(vertical = 16.dp)
         ) {
             IconButton(onClick = ::closeNow) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = text)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = iconColor)
             }
             Spacer(Modifier.width(8.dp))
             Text(
@@ -355,6 +432,14 @@ fun AddWorkScreen(
                 color = text,
                 style = MaterialTheme.typography.titleLarge
             )
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { showNetworkSearchDialog = true }) {
+                Icon(
+                    imageVector = Icons.Default.CloudDownload,
+                    contentDescription = stringResource(R.string.search_network),
+                    tint = parserIconColor
+                )
+            }
         }
 
         val formScrollState = rememberScrollState()
@@ -374,6 +459,15 @@ fun AddWorkScreen(
                 placeholder = { Text(stringResource(R.string.title_placeholder)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                trailingIcon = {
+                    IconButton(onClick = { showNetworkSearchDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Default.CloudDownload,
+                            contentDescription = stringResource(R.string.search_network),
+                            tint = parserIconColor
+                        )
+                    }
+                },
                 colors = fieldColors
             )
 
@@ -655,39 +749,222 @@ fun AddWorkScreen(
 
                 if (coverPaths.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(coverPaths.size) { index ->
-                            Box(
-                                modifier = Modifier
-                                    .size(72.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(
-                                        if (index == selectedCoverIndex) text.copy(alpha = 0.25f) else fieldBg
-                                    )
-                                    .clickable { selectedCoverIndex = index }
-                            ) {
-                                androidx.compose.foundation.Image(
-                                    painter = rememberAsyncImagePainter(coverPaths[index].toCoverImageData()),
-                                    contentDescription = null,
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                                )
-                                IconButton(
-                                    onClick = {
-                                        val newList = coverPaths.toMutableList().also { it.removeAt(index) }
-                                        coverPaths = newList
-                                        selectedCoverIndex = selectedCoverIndex.coerceAtMost((newList.size - 1).coerceAtLeast(0))
-                                    },
-                                    modifier = Modifier.align(Alignment.TopEnd).size(24.dp)
+                    val density = LocalDensity.current
+                    val itemTotalWidthPx = with(density) { 80.dp.toPx() }
+                    var draggingCoverPath by remember { mutableStateOf<String?>(null) }
+                    var dragOffset by remember { mutableFloatStateOf(0f) }
+                    var touchViewportX by remember { mutableFloatStateOf(0f) }
+                    val rowScrollState = rememberScrollState()
+                    var rowViewportWidth by remember { mutableIntStateOf(0) }
+
+                    LaunchedEffect(draggingCoverPath) {
+                        val activePath = draggingCoverPath ?: return@LaunchedEffect
+                        while (isActive && draggingCoverPath == activePath) {
+                            val curList = coverPaths
+                            val curIdx = curList.indexOf(activePath)
+                            if (curIdx != -1 && rowViewportWidth > 0) {
+                                val edgeZone = with(density) { 60.dp.toPx() }
+                                val rightDist = rowViewportWidth - touchViewportX
+                                val leftDist = touchViewportX
+
+                                if (rightDist < edgeZone && curIdx < curList.size - 1 && rowScrollState.value < rowScrollState.maxValue) {
+                                    val factor = ((edgeZone - rightDist) / edgeZone).coerceIn(0.2f, 1f)
+                                    val scrollDelta = with(density) { (8.dp * factor).toPx() }
+                                    rowScrollState.dispatchRawDelta(scrollDelta)
+                                } else if (leftDist < edgeZone && curIdx > 0 && rowScrollState.value > 0) {
+                                    val factor = ((edgeZone - leftDist) / edgeZone).coerceIn(0.2f, 1f)
+                                    val scrollDelta = with(density) { (-8.dp * factor).toPx() }
+                                    rowScrollState.dispatchRawDelta(scrollDelta)
+                                }
+
+                                val restingCenter = curIdx * itemTotalWidthPx - rowScrollState.value + itemTotalWidthPx / 2f
+                                dragOffset = touchViewportX - restingCenter
+
+                                while (dragOffset > itemTotalWidthPx / 2f) {
+                                    val cList = coverPaths
+                                    val cIdx = cList.indexOf(activePath)
+                                    if (cIdx != -1 && cIdx < cList.size - 1) {
+                                        val nextIdx = cIdx + 1
+                                        val mutableList = cList.toMutableList()
+                                        val item = mutableList.removeAt(cIdx)
+                                        mutableList.add(nextIdx, item)
+                                        selectedCoverIndex = when (selectedCoverIndex) {
+                                            cIdx -> nextIdx
+                                            nextIdx -> cIdx
+                                            else -> selectedCoverIndex
+                                        }
+                                        coverPaths = mutableList
+                                        val newRestingCenter = nextIdx * itemTotalWidthPx - rowScrollState.value + itemTotalWidthPx / 2f
+                                        dragOffset = touchViewportX - newRestingCenter
+                                    } else break
+                                }
+
+                                while (dragOffset < -itemTotalWidthPx / 2f) {
+                                    val cList = coverPaths
+                                    val cIdx = cList.indexOf(activePath)
+                                    if (cIdx != -1 && cIdx > 0) {
+                                        val prevIdx = cIdx - 1
+                                        val mutableList = cList.toMutableList()
+                                        val item = mutableList.removeAt(cIdx)
+                                        mutableList.add(prevIdx, item)
+                                        selectedCoverIndex = when (selectedCoverIndex) {
+                                            cIdx -> prevIdx
+                                            prevIdx -> cIdx
+                                            else -> selectedCoverIndex
+                                        }
+                                        coverPaths = mutableList
+                                        val newRestingCenter = prevIdx * itemTotalWidthPx - rowScrollState.value + itemTotalWidthPx / 2f
+                                        dragOffset = touchViewportX - newRestingCenter
+                                    } else break
+                                }
+                            }
+                            delay(16L)
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onSizeChanged { rowViewportWidth = it.width }
+                            .horizontalScroll(rowScrollState),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        coverPaths.forEachIndexed { index, coverPath ->
+                            key(coverPath) {
+                                val isDragging = draggingCoverPath == coverPath
+                                Box(
+                                    modifier = Modifier
+                                        .size(72.dp)
+                                        .zIndex(if (isDragging) 10f else 1f)
+                                        .graphicsLayer {
+                                            if (isDragging) {
+                                                translationX = dragOffset
+                                                scaleX = 1.1f
+                                                scaleY = 1.1f
+                                                shadowElevation = 8.dp.toPx()
+                                            }
+                                            shape = RoundedCornerShape(8.dp)
+                                            clip = true
+                                        }
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (index == selectedCoverIndex) text.copy(alpha = 0.25f) else fieldBg
+                                        )
+                                        .then(
+                                            if (isDragging) {
+                                                Modifier.border(2.dp, accentColor, RoundedCornerShape(8.dp))
+                                            } else if (index == selectedCoverIndex) {
+                                                Modifier.border(2.dp, text.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                                            } else {
+                                                Modifier
+                                            }
+                                        )
+                                        .pointerInput(coverPath) {
+                                            if (coverPaths.size > 1) {
+                                                detectDragGesturesAfterLongPress(
+                                                    onDragStart = { offset ->
+                                                        draggingCoverPath = coverPath
+                                                        val curIdx = coverPaths.indexOf(coverPath)
+                                                        val itemStartX = curIdx * itemTotalWidthPx - rowScrollState.value
+                                                        touchViewportX = itemStartX + offset.x
+                                                        dragOffset = 0f
+                                                    },
+                                                    onDrag = { change, dragAmount ->
+                                                        change.consume()
+                                                        touchViewportX += dragAmount.x
+                                                        val curList = coverPaths
+                                                        val curIdx = curList.indexOf(coverPath)
+                                                        if (curIdx != -1) {
+                                                            val restingCenter = curIdx * itemTotalWidthPx - rowScrollState.value + itemTotalWidthPx / 2f
+                                                            dragOffset = touchViewportX - restingCenter
+
+                                                            while (dragOffset > itemTotalWidthPx / 2f) {
+                                                                val cList = coverPaths
+                                                                val cIdx = cList.indexOf(coverPath)
+                                                                if (cIdx != -1 && cIdx < cList.size - 1) {
+                                                                    val nextIdx = cIdx + 1
+                                                                    val mutableList = cList.toMutableList()
+                                                                    val item = mutableList.removeAt(cIdx)
+                                                                    mutableList.add(nextIdx, item)
+                                                                    selectedCoverIndex = when (selectedCoverIndex) {
+                                                                        cIdx -> nextIdx
+                                                                        nextIdx -> cIdx
+                                                                        else -> selectedCoverIndex
+                                                                    }
+                                                                    coverPaths = mutableList
+                                                                    val newRestingCenter = nextIdx * itemTotalWidthPx - rowScrollState.value + itemTotalWidthPx / 2f
+                                                                    dragOffset = touchViewportX - newRestingCenter
+                                                                } else break
+                                                            }
+
+                                                            while (dragOffset < -itemTotalWidthPx / 2f) {
+                                                                val cList = coverPaths
+                                                                val cIdx = cList.indexOf(coverPath)
+                                                                if (cIdx != -1 && cIdx > 0) {
+                                                                    val prevIdx = cIdx - 1
+                                                                    val mutableList = cList.toMutableList()
+                                                                    val item = mutableList.removeAt(cIdx)
+                                                                    mutableList.add(prevIdx, item)
+                                                                    selectedCoverIndex = when (selectedCoverIndex) {
+                                                                        cIdx -> prevIdx
+                                                                        prevIdx -> cIdx
+                                                                        else -> selectedCoverIndex
+                                                                    }
+                                                                    coverPaths = mutableList
+                                                                    val newRestingCenter = prevIdx * itemTotalWidthPx - rowScrollState.value + itemTotalWidthPx / 2f
+                                                                    dragOffset = touchViewportX - newRestingCenter
+                                                                } else break
+                                                            }
+                                                        }
+                                                    },
+                                                    onDragEnd = {
+                                                        draggingCoverPath = null
+                                                        dragOffset = 0f
+                                                    },
+                                                    onDragCancel = {
+                                                        draggingCoverPath = null
+                                                        dragOffset = 0f
+                                                    }
+                                                )
+                                            }
+                                        }
+                                        .clickable { selectedCoverIndex = index }
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
+                                    androidx.compose.foundation.Image(
+                                        painter = rememberAsyncImagePainter(coverPath.toCoverImageData()),
                                         contentDescription = null,
-                                        tint = Color.White
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
                                     )
+                                    IconButton(
+                                        onClick = {
+                                            val newList = coverPaths.toMutableList().also { it.removeAt(index) }
+                                            coverPaths = newList
+                                            selectedCoverIndex = selectedCoverIndex.coerceAtMost((newList.size - 1).coerceAtLeast(0))
+                                        },
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = null,
+                                            tint = Color.White
+                                        )
+                                    }
                                 }
                             }
                         }
+                    }
+
+                    if (coverPaths.size > 1) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = stringResource(R.string.drag_covers_hint),
+                            color = text.copy(alpha = 0.5f),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp
+                        )
                     }
                 }
             }
@@ -788,8 +1065,8 @@ fun AddWorkScreen(
                 OutlinedTextField(
                     value = dateRead,
                     onValueChange = { input ->
-                        // Сохраняем только цифры
-                        val digits = input.replace("[^0-9]".toRegex(), "")
+                        // Сохраняем только цифры, максимум 8 (ДДММГГГГ)
+                        val digits = input.filter { it.isDigit() }.take(8)
                         dateRead = digits
                     },
                     label = { Text(
@@ -836,7 +1113,7 @@ fun AddWorkScreen(
                 onItemsChange = { genres = it },
                 suggestions = existingGenres,
                 fieldColors = fieldColors,
-                chipAccentColor = accentColor,
+                chipAccentColor = fieldHighlight,
                 isTag = false
             )
 
@@ -850,7 +1127,7 @@ fun AddWorkScreen(
                 onItemsChange = { tags = it },
                 suggestions = existingTags,
                 fieldColors = fieldColors,
-                chipAccentColor = accentColor,
+                chipAccentColor = fieldHighlight,
                 isTag = true
             )
 
@@ -919,13 +1196,14 @@ fun AddWorkScreen(
                             ?.replace(Regex("\\s*-\\s*"), " - "),
                         dateRead = formatDateForSave(dateRead).ifEmpty { null },
                         rereadDates = rereadSaved,
-                        link = parseLinksForSave(linksText).first,
-                        link2 = parseLinksForSave(linksText).second,
+                        link = parseLinksList(linksText).getOrNull(0),
+                        link2 = parseLinksList(linksText).getOrNull(1),
+                        links = parseLinksList(linksText),
                         author = author.trim().ifEmpty { null },
                         note = note.ifEmpty { null },
                         updatedAt = System.currentTimeMillis(),
-                        genres = genres,
-                        tags = tags,
+                        genres = GenreTagTranslator.translateAndNormalizeChips(genres, Language.RUSSIAN),
+                        tags = GenreTagTranslator.translateAndNormalizeChips(tags, Language.RUSSIAN),
                         // Сохраняем существующие поля
                         abandonedProgress = work?.abandonedProgress,
                         readingPeriods = work?.readingPeriods ?: emptyList(),
@@ -936,7 +1214,10 @@ fun AddWorkScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 16.dp),
-                enabled = title.isNotBlank()
+                enabled = title.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AppButtonColor()
+                )
             ) {
                 Text(stringResource(R.string.save))
             }
@@ -945,10 +1226,104 @@ fun AddWorkScreen(
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
-}
+    }
+
+    if (showNetworkSearchDialog) {
+        val initialSrc = when (type) {
+            WorkType.BOOK -> MediaSource.RANOBELIB
+            WorkType.MANGA -> MediaSource.MANGALIB
+            WorkType.SERIES -> MediaSource.KINOPOISK
+            WorkType.ANIME -> MediaSource.SHIKIMORI
+        }
+        NetworkSearchDialog(
+            initialQuery = title,
+            initialSource = initialSrc,
+            initialFilter = ShikimoriFilterType.ALL,
+            workId = stableWorkId,
+            repository = repository,
+            onDismiss = {
+                showNetworkSearchDialog = false
+                NetworkParserManager.clearCache()
+            },
+            onWorkSelected = { metadata, localCoverPath ->
+                NetworkParserManager.clearCache()
+                try {
+                    title = ParserUtils.cleanText(metadata.title)
+                    val cleanAlt = metadata.alternativeTitles
+                        .map { ParserUtils.cleanText(it) }
+                        .filter { it.isNotBlank() && !it.equals("null", ignoreCase = true) && it != title }
+                    alternativeTitles = if (cleanAlt.isNotEmpty()) cleanAlt.joinToString("\n") else ""
+                    if (metadata.description.isNotBlank()) {
+                        description = ParserUtils.cleanDescription(metadata.description)
+                    }
+                    type = metadata.type
+                    // Проверяем и при необходимости гармонизируем статус с новым типом произведения
+                    val validStatuses = when (metadata.type) {
+                        WorkType.BOOK, WorkType.MANGA -> listOf(WorkStatus.IN_PLANS, WorkStatus.READING, WorkStatus.READ, WorkStatus.ABANDONED)
+                        WorkType.ANIME, WorkType.SERIES -> listOf(WorkStatus.IN_PLANS, WorkStatus.WATCHING, WorkStatus.WATCHED, WorkStatus.ABANDONED)
+                    }
+                    if (status !in validStatuses) {
+                        status = when (status) {
+                            WorkStatus.READING -> WorkStatus.WATCHING
+                            WorkStatus.WATCHING -> WorkStatus.READING
+                            WorkStatus.READ -> WorkStatus.WATCHED
+                            WorkStatus.WATCHED -> WorkStatus.READ
+                            else -> WorkStatus.IN_PLANS
+                        }
+                    }
+
+                    metadata.mangaType?.let { mangaType = it }
+                    metadata.seriesType?.let { seriesType = it }
+                    metadata.animeSeason?.let { animeSeason = it }
+                    metadata.year?.let { year = it.toString() }
+                    if (metadata.type == WorkType.BOOK) {
+                        val totalCh = metadata.bookChapters ?: metadata.chapters
+                        totalCh?.let { bookChapters = formatNumberForDisplay(it) }
+                        metadata.volumes?.let { chapters = formatNumberForDisplay(it) }
+                    } else if (metadata.type == WorkType.MANGA) {
+                        metadata.chapters?.let { chapters = formatNumberForDisplay(it) }
+                        metadata.volumes?.let { volumes = formatNumberForDisplay(it) }
+                    } else {
+                        val totalEp = metadata.episodes ?: metadata.chapters
+                        totalEp?.let { episodes = formatNumberForDisplay(it) }
+                        metadata.volumes?.let { seasons = formatNumberForDisplay(it) }
+                    }
+                    val cleanAuthor = ParserUtils.sanitizeAuthor(metadata.author)
+                    author = cleanAuthor ?: ""
+                    if (metadata.genres.isNotEmpty() || genres.isNotEmpty()) {
+                        genres = GenreTagTranslator.translateAndNormalizeChips(genres + metadata.genres, Language.RUSSIAN)
+                    }
+                    if (metadata.tags.isNotEmpty() || tags.isNotEmpty()) {
+                        tags = GenreTagTranslator.translateAndNormalizeChips(tags + metadata.tags, Language.RUSSIAN)
+                    }
+                    val existingLinks = linksText.split("\n", ";").map { it.trim() }.filter { it.isNotEmpty() }.toMutableList()
+                    if (!metadata.link.isNullOrBlank() && !existingLinks.contains(metadata.link.trim())) {
+                        existingLinks.add(metadata.link.trim())
+                    }
+                    for (extraLink in metadata.additionalLinks) {
+                        val trimmed = extraLink.trim()
+                        if (trimmed.isNotEmpty() && !existingLinks.contains(trimmed)) {
+                            existingLinks.add(trimmed)
+                        }
+                    }
+                    linksText = existingLinks.joinToString("\n")
+
+                    val primaryCover = localCoverPath ?: metadata.coverUrl
+                    val allNewCovers = (listOfNotNull(primaryCover) + metadata.additionalCovers).filter { it.isNotBlank() }
+                    if (allNewCovers.isNotEmpty()) {
+                        val combined = (allNewCovers + coverPaths).distinct().take(10)
+                        coverPaths = combined
+                        selectedCoverIndex = 0
+                    }
+                    Toast.makeText(context, context.getString(R.string.network_import_success), Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        )
+    }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CustomDropdown(
     label: String,
@@ -961,7 +1336,9 @@ private fun CustomDropdown(
 ) {
     val fieldBg = SearchBarColor()
     val text = TitleColorBetween()
-    val accentColor = MaterialTheme.colorScheme.primary
+    val fieldHighlight = FieldHighlightColor()
+    val accentColor = fieldHighlight
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val fieldColors = TextFieldDefaults.colors(
         focusedContainerColor = fieldBg,
         unfocusedContainerColor = fieldBg,
@@ -972,83 +1349,80 @@ private fun CustomDropdown(
         disabledTextColor = text,
         focusedLabelColor = accentColor,
         unfocusedLabelColor = text.copy(alpha = 0.7f),
+        disabledLabelColor = text.copy(alpha = 0.7f),
         focusedPlaceholderColor = text.copy(alpha = 0.5f),
         unfocusedPlaceholderColor = text.copy(alpha = 0.5f),
+        disabledPlaceholderColor = text.copy(alpha = 0.5f),
         cursorColor = accentColor,
         focusedIndicatorColor = accentColor,
-        unfocusedIndicatorColor = text.copy(alpha = 0.3f)
+        unfocusedIndicatorColor = text.copy(alpha = 0.3f),
+        disabledIndicatorColor = text.copy(alpha = 0.3f),
+        disabledTrailingIconColor = text
     )
 
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = onExpandedChange,
-        modifier = modifier
+    Box(
+        modifier = modifier.clickable(
+            indication = null,
+            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+        ) {
+            focusManager.clearFocus()
+            onExpandedChange(!expanded)
+        }
     ) {
         OutlinedTextField(
             value = value,
             onValueChange = {},
             readOnly = true,
+            enabled = false,
             label = { Text(label) },
             trailingIcon = {
                 Icon(
                     Icons.Default.ArrowDropDown,
                     contentDescription = null,
-                    tint = text,
-                    modifier = Modifier.rotate(
-                        animateFloatAsState(
-                            targetValue = if (expanded) 180f else 0f,
-                            animationSpec = tween(300, easing = FastOutSlowInEasing)
-                        ).value
-                    )
+                    tint = text
                 )
             },
-            modifier = Modifier
-                .menuAnchor()
-                .fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth(),
             colors = fieldColors
         )
 
-        // Анимированное выпадающее меню
-        AnimatedVisibility(
-            visible = expanded,
-            enter = slideInVertically(
-                initialOffsetY = { -20 },
-                animationSpec = tween(200, easing = FastOutSlowInEasing)
-            ) + fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)),
-            exit = slideOutVertically(
-                targetOffsetY = { -20 },
-                animationSpec = tween(200, easing = FastOutSlowInEasing)
-            ) + fadeOut(animationSpec = tween(200, easing = FastOutSlowInEasing))
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { onExpandedChange(false) },
+            shape = RoundedCornerShape(14.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            shadowElevation = 6.dp,
+            tonalElevation = 2.dp,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
         ) {
-            DropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { onExpandedChange(false) },
-                modifier = Modifier.background(fieldBg),
-                offset = DpOffset((-2).dp, (-8).dp)
-            ) {
-                items.forEachIndexed { index, item ->
-                    AnimatedVisibility(
-                        visible = true,
-                        enter = slideInVertically(
-                            initialOffsetY = { (index + 1) * 10 },
-                            animationSpec = tween(200, delayMillis = index * 30, easing = FastOutSlowInEasing)
-                        ) + fadeIn(animationSpec = tween(200, delayMillis = index * 30, easing = FastOutSlowInEasing)),
-                        exit = slideOutVertically(
-                            targetOffsetY = { -10 },
-                            animationSpec = tween(150, easing = FastOutSlowInEasing)
-                        ) + fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing))
-                    ) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = item,
-                                    color = text
-                                )
-                            },
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items.forEach { item ->
+                        val isSelected = item == value
+                        AssistChip(
                             onClick = {
                                 onItemSelected(item)
                             },
-                            modifier = Modifier.background(fieldBg)
+                            label = {
+                                Text(
+                                    text = item,
+                                    color = if (isSelected) accentColor else MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = Color.Transparent,
+                                labelColor = if (isSelected) accentColor else MaterialTheme.colorScheme.onSurface
+                            ),
+                            border = AssistChipDefaults.assistChipBorder(
+                                borderColor = if (isSelected) accentColor else accentColor.copy(alpha = 0.5f),
+                                borderWidth = if (isSelected) 2.dp else 1.dp,
+                                enabled = true
+                            ),
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
                 }
@@ -1057,7 +1431,6 @@ private fun CustomDropdown(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ChipInputSection(
     label: String,
@@ -1071,12 +1444,35 @@ private fun ChipInputSection(
     chipAccentColor: Color,
     isTag: Boolean = false
 ) {
+    var dropdownExpanded by remember { mutableStateOf(false) }
+    val arrowColor = TitleColorBetween()
+    val interactionSource = remember { MutableInteractionSource() }
+
+    val availableSuggestions = suggestions.filter { it !in items }
+    val filteredSuggestions = if (inputValue.isBlank()) {
+        availableSuggestions
+    } else {
+        val clean = if (isTag && inputValue.startsWith("#")) inputValue.removePrefix("#").trim() else inputValue.trim()
+        availableSuggestions.filter { it.contains(clean, ignoreCase = true) }
+    }
+
+    LaunchedEffect(interactionSource) {
+        interactionSource.interactions.collect { interaction ->
+            if (interaction is PressInteraction.Release) {
+                if (availableSuggestions.isNotEmpty()) {
+                    dropdownExpanded = true
+                }
+            }
+        }
+    }
+
     fun addItems(raw: String) {
         val newParts = raw.split(",", ";", "\n")
             .map { it.trim() }
-            .filter { it.isNotEmpty() }
+            .map { if (isTag && it.startsWith("#")) it.removePrefix("#").trim() else it }
+            .filter { it.isNotBlank() }
         if (newParts.isNotEmpty()) {
-            val updated = (items + newParts).distinct()
+            val updated = GenreTagTranslator.translateAndNormalizeChips(items + newParts, Language.RUSSIAN)
             onItemsChange(updated)
             onInputValueChange("")
         }
@@ -1086,85 +1482,140 @@ private fun ChipInputSection(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        OutlinedTextField(
-            value = inputValue,
-            onValueChange = onInputValueChange,
-            label = { Text(label) },
-            placeholder = { Text(placeholder) },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { addItems(inputValue) }),
-            trailingIcon = {
-                if (inputValue.isNotBlank()) {
-                    IconButton(onClick = { addItems(inputValue) }) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = label,
-                            tint = chipAccentColor
-                        )
+        Box(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            OutlinedTextField(
+                value = inputValue,
+                onValueChange = {
+                    onInputValueChange(it)
+                    dropdownExpanded = true
+                },
+                interactionSource = interactionSource,
+                label = { Text(label) },
+                placeholder = { Text(placeholder) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { focusState ->
+                        if (focusState.isFocused && availableSuggestions.isNotEmpty()) {
+                            dropdownExpanded = true
+                        }
+                    },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = {
+                    addItems(inputValue)
+                    dropdownExpanded = false
+                }),
+                trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (inputValue.isNotBlank()) {
+                            IconButton(onClick = {
+                                addItems(inputValue)
+                                dropdownExpanded = false
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = label,
+                                    tint = chipAccentColor
+                                )
+                            }
+                        }
+                        if (availableSuggestions.isNotEmpty()) {
+                            IconButton(onClick = { dropdownExpanded = !dropdownExpanded }) {
+                                Icon(
+                                    imageVector = if (dropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                    contentDescription = null,
+                                    tint = arrowColor
+                                )
+                            }
+                        }
                     }
-                }
-            },
-            colors = fieldColors
-        )
+                },
+                colors = fieldColors
+            )
 
-        // Added chips
-        if (items.isNotEmpty()) {
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+            DropdownMenu(
+                expanded = dropdownExpanded && filteredSuggestions.isNotEmpty(),
+                onDismissRequest = { dropdownExpanded = false },
+                properties = PopupProperties(focusable = false),
+                shape = RoundedCornerShape(14.dp),
+                containerColor = MaterialTheme.colorScheme.surface,
+                shadowElevation = 6.dp,
+                tonalElevation = 2.dp,
+                modifier = Modifier
+                    .heightIn(max = 260.dp)
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
             ) {
-                items.forEach { item ->
-                    val displayLabel = if (isTag && !item.startsWith("#")) "#$item" else item
-                    AssistChip(
-                        onClick = { onItemsChange(items - item) },
-                        label = { Text(displayLabel, fontSize = 13.sp) },
-                        trailingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = stringResource(R.string.delete),
-                                modifier = Modifier.size(16.dp)
+                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        filteredSuggestions.forEach { suggestion ->
+                            val displaySuggestion = if (isTag && !suggestion.startsWith("#")) "#$suggestion" else suggestion
+                            AssistChip(
+                                onClick = {
+                                    val translated = GenreTagTranslator.translateTag(suggestion, Language.RUSSIAN)
+                                    onItemsChange(GenreTagTranslator.translateAndNormalizeChips(items + listOf(translated), Language.RUSSIAN))
+                                    onInputValueChange("")
+                                    dropdownExpanded = false
+                                },
+                                label = {
+                                    Text(
+                                        text = displaySuggestion,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.Normal
+                                    )
+                                },
+                                colors = AssistChipDefaults.assistChipColors(
+                                    containerColor = Color.Transparent,
+                                    labelColor = MaterialTheme.colorScheme.onSurface
+                                ),
+                                border = AssistChipDefaults.assistChipBorder(
+                                    borderColor = chipAccentColor.copy(alpha = 0.5f),
+                                    borderWidth = 1.dp,
+                                    enabled = true
+                                ),
+                                modifier = Modifier.fillMaxWidth()
                             )
-                        },
-                        colors = AssistChipDefaults.assistChipColors(
-                            containerColor = chipAccentColor.copy(alpha = 0.15f),
-                            labelColor = MaterialTheme.colorScheme.onSurface
-                        ),
-                        border = AssistChipDefaults.assistChipBorder(
-                            borderColor = chipAccentColor.copy(alpha = 0.45f),
-                            borderWidth = 1.dp,
-                            enabled = true
-                        )
-                    )
+                        }
+                    }
                 }
             }
         }
 
-        // Suggestions
-        val availableSuggestions = suggestions.filter { it !in items }
-        if (availableSuggestions.isNotEmpty()) {
-            LazyRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                items(availableSuggestions.take(20)) { suggestion ->
-                    val displaySuggestion = if (isTag && !suggestion.startsWith("#")) "#$suggestion" else suggestion
-                    AssistChip(
-                        onClick = {
-                            onItemsChange((items + suggestion).distinct())
-                        },
-                        label = { Text("+ $displaySuggestion", fontSize = 12.sp) },
-                        colors = AssistChipDefaults.assistChipColors(
-                            containerColor = Color.Transparent
-                        ),
-                        border = AssistChipDefaults.assistChipBorder(
-                            borderColor = chipAccentColor.copy(alpha = 0.25f),
-                            borderWidth = 1.dp,
-                            enabled = true
+        // Added chips (only selected genres / tags are shown under the field)
+        if (items.isNotEmpty()) {
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                ChipsFlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalSpacing = 4.dp,
+                    verticalSpacing = 4.dp
+                ) {
+                    items.forEach { item ->
+                        val displayLabel = if (isTag && !item.startsWith("#")) "#$item" else item
+                        AssistChip(
+                            onClick = { onItemsChange(items - item) },
+                            label = { Text(displayLabel, fontSize = 13.sp) },
+                            trailingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = stringResource(R.string.delete),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = chipAccentColor.copy(alpha = 0.15f),
+                                labelColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            border = AssistChipDefaults.assistChipBorder(
+                                borderColor = chipAccentColor.copy(alpha = 0.45f),
+                                borderWidth = 1.dp,
+                                enabled = true
+                            )
                         )
-                    )
+                    }
                 }
             }
         }

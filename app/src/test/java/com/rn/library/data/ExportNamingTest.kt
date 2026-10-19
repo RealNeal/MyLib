@@ -27,6 +27,6 @@ class ExportNamingTest {
     fun parseExportCoverIndex_handlesSpecialRegexCharactersInTitle() {
         val base = "Dr. Stone (2)"
         assertEquals(0, parseExportCoverIndex(base, base))
-        assertEquals(1, parseExportCoverIndex(base, "$base_2"))
+        assertEquals(1, parseExportCoverIndex(base, "${base}_2"))
     }
 }

@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import com.rn.library.R
 import com.rn.library.data.UnitProgress
 import com.rn.library.data.WorkType
+import com.rn.library.ui.theme.FieldHighlightColor
 
 @Composable
 fun UnitProgressEditor(
@@ -124,7 +125,7 @@ private fun UnitProgressRow(
         WorkType.SERIES -> stringResource(R.string.watched)
         else -> stringResource(R.string.unit_completed)
     }
-    val accentColor = MaterialTheme.colorScheme.primary
+    val accentColor = FieldHighlightColor()
     val colors = TextFieldDefaults.colors(
         focusedContainerColor = fieldBg,
         unfocusedContainerColor = fieldBg,

@@ -18,6 +18,15 @@ object AppSettings {
     private const val KEY_CUSTOM_ACCENT_ARGB = "custom_accent_argb"
     private const val KEY_USE_CUSTOM_STATS_COLOR = "use_custom_stats_color"
     private const val KEY_CUSTOM_STATS_ARGB = "custom_stats_argb"
+    private const val KEY_USE_CUSTOM_BG_COLOR = "use_custom_bg_color"
+    private const val KEY_CUSTOM_BG_COLOR_ARGB = "custom_bg_color_argb"
+    private const val KEY_USE_CUSTOM_ICON_COLOR = "use_custom_icon_color"
+    private const val KEY_CUSTOM_ICON_COLOR_ARGB = "custom_icon_color_argb"
+    private const val KEY_USE_CUSTOM_TEXT_COLOR = "use_custom_text_color"
+    private const val KEY_CUSTOM_TEXT_COLOR_ARGB = "custom_text_color_argb"
+    private const val KEY_USE_CUSTOM_BUTTON_COLOR = "use_custom_button_color"
+    private const val KEY_CUSTOM_BUTTON_COLOR_ARGB = "custom_button_color_argb"
+    private const val KEY_SEARCH_OTHER_SOURCES = "search_other_sources"
 
     /**
      * Возвращает шаг инкремента для числовых полей.
@@ -110,5 +119,106 @@ object AppSettings {
             putInt(KEY_CUSTOM_STATS_ARGB, argb)
         }
     }
+
+    fun isUseCustomBgColor(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_USE_CUSTOM_BG_COLOR, false)
+    }
+
+    fun setUseCustomBgColor(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_USE_CUSTOM_BG_COLOR, enabled)
+        }
+    }
+
+    fun getCustomBgColorArgb(context: Context): Int {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getInt(KEY_CUSTOM_BG_COLOR_ARGB, 0xFF1B1B1B.toInt())
+    }
+
+    fun setCustomBgColorArgb(context: Context, argb: Int) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putInt(KEY_CUSTOM_BG_COLOR_ARGB, argb)
+        }
+    }
+
+    fun isUseCustomIconColor(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_USE_CUSTOM_ICON_COLOR, false)
+    }
+
+    fun setUseCustomIconColor(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_USE_CUSTOM_ICON_COLOR, enabled)
+        }
+    }
+
+    fun getCustomIconColorArgb(context: Context): Int {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getInt(KEY_CUSTOM_ICON_COLOR_ARGB, 0xFFEAEAEA.toInt())
+    }
+
+    fun setCustomIconColorArgb(context: Context, argb: Int) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putInt(KEY_CUSTOM_ICON_COLOR_ARGB, argb)
+        }
+    }
+
+    fun isUseCustomTextColor(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_USE_CUSTOM_TEXT_COLOR, false)
+    }
+
+    fun setUseCustomTextColor(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_USE_CUSTOM_TEXT_COLOR, enabled)
+        }
+    }
+
+    fun getCustomTextColorArgb(context: Context): Int {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getInt(KEY_CUSTOM_TEXT_COLOR_ARGB, 0xFFEDEDED.toInt())
+    }
+
+    fun setCustomTextColorArgb(context: Context, argb: Int) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putInt(KEY_CUSTOM_TEXT_COLOR_ARGB, argb)
+        }
+    }
+
+    fun isUseCustomButtonColor(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_USE_CUSTOM_BUTTON_COLOR, false)
+    }
+
+    fun setUseCustomButtonColor(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_USE_CUSTOM_BUTTON_COLOR, enabled)
+        }
+    }
+
+    fun getCustomButtonColorArgb(context: Context): Int {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getInt(KEY_CUSTOM_BUTTON_COLOR_ARGB, 0xFF6750A4.toInt())
+    }
+
+    fun setCustomButtonColorArgb(context: Context, argb: Int) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putInt(KEY_CUSTOM_BUTTON_COLOR_ARGB, argb)
+        }
+    }
+
+    fun isSearchOtherSourcesEnabled(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getBoolean(KEY_SEARCH_OTHER_SOURCES, false)
+    }
+
+    fun setSearchOtherSourcesEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_SEARCH_OTHER_SOURCES, enabled)
+        }
+    }
+
+    fun getLanguage(context: Context): Language = LanguageState.storedLanguage(context)
 }
 

@@ -115,6 +115,22 @@ fun ProfileScreen(
     onUseCustomStatsColorChange: (Boolean) -> Unit = {},
     customStatsArgb: Int = 0xFF7C4DFF.toInt(),
     onCustomStatsArgbChange: (Int) -> Unit = {},
+    useCustomIconColor: Boolean = false,
+    onUseCustomIconColorChange: (Boolean) -> Unit = {},
+    customIconColorArgb: Int = 0xFFEAEAEA.toInt(),
+    onCustomIconColorChange: (Int) -> Unit = {},
+    useCustomBgColor: Boolean = false,
+    onUseCustomBgColorChange: (Boolean) -> Unit = {},
+    customBgColorArgb: Int = 0xFF1B1B1B.toInt(),
+    onCustomBgColorArgbChange: (Int) -> Unit = {},
+    useCustomTextColor: Boolean = false,
+    onUseCustomTextColorChange: (Boolean) -> Unit = {},
+    customTextColorArgb: Int = 0xFFEDEDED.toInt(),
+    onCustomTextColorArgbChange: (Int) -> Unit = {},
+    useCustomButtonColor: Boolean = false,
+    onUseCustomButtonColorChange: (Boolean) -> Unit = {},
+    customButtonColorArgb: Int = 0xFF6750A4.toInt(),
+    onCustomButtonColorArgbChange: (Int) -> Unit = {},
     booksTabEnabled: Boolean = true,
     onBooksTabEnabledChange: (Boolean) -> Unit = {},
     animeTabEnabled: Boolean = true,
@@ -138,12 +154,7 @@ fun ProfileScreen(
     val titleColorBetween = TitleColorBetween()
     val dynamicScheme = MaterialTheme.colorScheme
     val profileSectionCardColor = com.rn.library.ui.theme.ProfileSectionCardColor(dynamicColorsEnabled)
-    val profileSectionTextColor =
-        if (dynamicColorsEnabled) {
-            if (currentTheme == AppTheme.LIGHT) Color(0xFF101010) else Color(0xFFF5F5F5)
-        } else {
-            Color.White
-        }
+    val profileSectionTextColor = com.rn.library.ui.theme.ProfileSectionTextColor(dynamicColorsEnabled, currentTheme)
     val context = LocalContext.current
     val importNothingImported = stringResource(R.string.import_nothing_imported)
     val exportErrorText = stringResource(R.string.export_error)
@@ -204,7 +215,7 @@ fun ProfileScreen(
             val msg = if (ok == 0 && failedNames.isNotEmpty()) {
                 val preview = failedNames.take(2).joinToString(", ")
                 val tail = if (failedNames.size > 2) " +${failedNames.size - 2}" else ""
-                "${importNothingImported}. Ошибки: $preview$tail"
+                "${importNothingImported}. ${context.getString(R.string.import_errors_prefix, "$preview$tail")}"
             } else if (ok == 0) {
                 importNothingImported
             } else {
@@ -212,7 +223,7 @@ fun ProfileScreen(
                 if (failedNames.isNotEmpty()) {
                     val preview = failedNames.take(2).joinToString(", ")
                     val tail = if (failedNames.size > 2) " +${failedNames.size - 2}" else ""
-                    "$base. Ошибки: $preview$tail"
+                    "$base. ${context.getString(R.string.import_errors_prefix, "$preview$tail")}"
                 } else {
                     base
                 }
@@ -249,7 +260,7 @@ fun ProfileScreen(
             val msg = if (ok == 0 && failedNames.isNotEmpty()) {
                 val preview = failedNames.take(2).joinToString(", ")
                 val tail = if (failedNames.size > 2) " +${failedNames.size - 2}" else ""
-                "${importNothingImported}. Ошибки: $preview$tail"
+                "${importNothingImported}. ${context.getString(R.string.import_errors_prefix, "$preview$tail")}"
             } else if (ok == 0) {
                 importNothingImported
             } else {
@@ -257,7 +268,7 @@ fun ProfileScreen(
                 if (failedNames.isNotEmpty()) {
                     val preview = failedNames.take(2).joinToString(", ")
                     val tail = if (failedNames.size > 2) " +${failedNames.size - 2}" else ""
-                    "$base. Ошибки: $preview$tail"
+                    "$base. ${context.getString(R.string.import_errors_prefix, "$preview$tail")}"
                 } else {
                     base
                 }
@@ -298,6 +309,8 @@ fun ProfileScreen(
                 titleColorBetween = titleColorBetween,
                 currentTheme = currentTheme,
                 dynamicColorsEnabled = dynamicColorsEnabled,
+                useCustomStatsColor = useCustomStatsColor,
+                customStatsArgb = customStatsArgb,
                 notesCount = 0,
                 currentLanguage = currentLanguage
             )
@@ -461,6 +474,22 @@ fun ProfileScreen(
                 onUseCustomStatsColorChange = onUseCustomStatsColorChange,
                 customStatsArgb = customStatsArgb,
                 onCustomStatsArgbChange = onCustomStatsArgbChange,
+                useCustomIconColor = useCustomIconColor,
+                onUseCustomIconColorChange = onUseCustomIconColorChange,
+                customIconColorArgb = customIconColorArgb,
+                onCustomIconColorChange = onCustomIconColorChange,
+                useCustomBgColor = useCustomBgColor,
+                onUseCustomBgColorChange = onUseCustomBgColorChange,
+                customBgColorArgb = customBgColorArgb,
+                onCustomBgColorArgbChange = onCustomBgColorArgbChange,
+                useCustomTextColor = useCustomTextColor,
+                onUseCustomTextColorChange = onUseCustomTextColorChange,
+                customTextColorArgb = customTextColorArgb,
+                onCustomTextColorArgbChange = onCustomTextColorArgbChange,
+                useCustomButtonColor = useCustomButtonColor,
+                onUseCustomButtonColorChange = onUseCustomButtonColorChange,
+                customButtonColorArgb = customButtonColorArgb,
+                onCustomButtonColorArgbChange = onCustomButtonColorArgbChange,
                 booksTabEnabled = booksTabEnabled,
                 onBooksTabEnabledChange = onBooksTabEnabledChange,
                 animeTabEnabled = animeTabEnabled,
@@ -535,6 +564,8 @@ private fun StatisticsCard(
     titleColorBetween: Color,
     currentTheme: AppTheme = AppTheme.DARK,
     dynamicColorsEnabled: Boolean = false,
+    useCustomStatsColor: Boolean = false,
+    customStatsArgb: Int = 0xFF7C4DFF.toInt(),
     notesCount: Int = 0,
     currentLanguage: Language = Language.ENGLISH
 ) {
@@ -589,7 +620,9 @@ private fun StatisticsCard(
     val notesColor = Color(0xFF9B59B6)  // фиолетовый
     
     val mainBackgroundColor = MainBackgroundColor()
-    val statsActivityTint = if (dynamicColorsEnabled) {
+    val statsActivityTint = if (useCustomStatsColor) {
+        Color(customStatsArgb)
+    } else if (dynamicColorsEnabled) {
         MaterialTheme.colorScheme.primary
     } else {
         ProfileChartAccentColor(false)
@@ -795,15 +828,18 @@ private fun StatisticsCard(
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium
             )
+            val staticUnitsValueColor = if (currentTheme == AppTheme.DARK) Color(0xFFEDEDED) else Color(0xFF202020)
             StatisticRow(
                 label = stringResource(R.string.progress_read_chapters),
                 value = totalReadUnits.toString(),
-                titleColorBetween = titleColorBetween
+                titleColorBetween = titleColorBetween,
+                valueColor = staticUnitsValueColor
             )
             StatisticRow(
                 label = stringResource(R.string.progress_watched_episodes),
                 value = totalWatchedUnits.toString(),
-                titleColorBetween = titleColorBetween
+                titleColorBetween = titleColorBetween,
+                valueColor = staticUnitsValueColor
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -856,7 +892,8 @@ private fun StatisticsCard(
 private fun StatisticRow(
     label: String,
     value: String,
-    titleColorBetween: Color
+    titleColorBetween: Color,
+    valueColor: Color = titleColorBetween
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -870,7 +907,7 @@ private fun StatisticRow(
         )
         Text(
             text = value,
-            color = titleColorBetween,
+            color = valueColor,
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold
         )
@@ -1059,15 +1096,62 @@ private data class PeriodBarData(
     val allUnits: Double get() = readUnits + watchedUnits
 }
 
-/**
- * Нормализует значение относительно динамического максимума и округляет в дискретные уровни,
- * чтобы были заметны промежуточные состояния интенсивности.
- */
 private fun quantizedIntensity(value: Double, max: Double, levels: Int = 12): Float {
     if (value <= 0.0 || max <= 0.0) return 0f
     val normalized = (value / max).coerceIn(0.0, 1.0)
     val bucket = (normalized * levels).toInt().coerceIn(1, levels)
     return bucket.toFloat() / levels.toFloat()
+}
+
+/**
+ * Вычисляет цвет ячейки Heatmap с выраженным градиентом от минимальной активности до пиковой.
+ * Использует гамма-кривую контраста и динамическую модуляцию насыщенности и яркости HSV.
+ */
+private fun calculateHeatmapColor(
+    value: Double,
+    maxUnits: Double,
+    baseColor: Color,
+    tintColor: Color
+): Color {
+    if (value <= 0.0 || maxUnits <= 0.0) {
+        return baseColor.copy(alpha = 0.22f)
+    }
+    // 25 дискретных уровней квантования
+    val normalized = (value / maxUnits).coerceIn(0.0, 1.0)
+    val bucket = (normalized * 25).toInt().coerceIn(1, 25)
+    val fraction = bucket.toFloat() / 25f
+
+    // Гамма-кривая контраста для лучшей различимости малых и средних значений
+    val gamma = Math.pow(fraction.toDouble(), 0.72).toFloat()
+
+    // Преобразование целевого цвета в HSV для управления контрастом и яркостью
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(
+        android.graphics.Color.argb(
+            (tintColor.alpha * 255).toInt(),
+            (tintColor.red * 255).toInt(),
+            (tintColor.green * 255).toInt(),
+            (tintColor.blue * 255).toInt()
+        ),
+        hsv
+    )
+    val hue = hsv[0]
+    val origSat = hsv[1]
+    val origVal = hsv[2]
+
+    // На малых значениях — более мягкая насыщенность, на пиках — максимальная яркость
+    val sat = (origSat * (0.40f + 0.60f * gamma)).coerceIn(0f, 1f)
+    val brightness = (origVal * (0.45f + 0.55f * gamma)).coerceIn(0f, 1f)
+    val hsvColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, brightness)))
+
+    val blended = lerp(baseColor, hsvColor, 0.18f + 0.82f * gamma)
+    // Дополнительный контрастный световой блик на пиковой активности (верхние 25%)
+    return if (gamma > 0.75f) {
+        val highlightFraction = ((gamma - 0.75f) / 0.25f).coerceIn(0f, 1f)
+        lerp(blended, Color.White, highlightFraction * 0.22f)
+    } else {
+        blended
+    }
 }
 
 /**
@@ -1163,17 +1247,12 @@ private fun ActivityHeatmap(
                             }
                         }
                         val value = points[date] ?: ActivityTotals(0.0, 0.0)
-                        val intensity = quantizedIntensity(value.allUnits, maxUnits, levels = 12)
-                        val cellColor = if (intensity == 0f) {
-                            heatmapBase.copy(alpha = 0.35f)
-                        } else {
-                            // Больше промежуточных оттенков между базовым цветом и акцентом.
-                            lerp(
-                                heatmapBase,
-                                statsTint,
-                                0.12f + intensity * 0.88f
-                            )
-                        }
+                        val cellColor = calculateHeatmapColor(
+                            value = value.allUnits,
+                            maxUnits = maxUnits,
+                            baseColor = heatmapBase,
+                            tintColor = statsTint
+                        )
                         val modifier = Modifier
                             .size(14.dp)
                             .clip(RoundedCornerShape(4.dp))

@@ -116,7 +116,7 @@
     <string name="symbols">caracteres</string>
     <string name="symbols_genitive">caracteres</string>
     <string name="increment_step_label">Paso de incremento</string>
-    <string name="date_placeholder">AAAA-MM-DD</string>
+    <string name="date_placeholder">DD.MM.AAAA</string>
     <string name="reread_dates_placeholder">DD.MM.AAAA, una por línea</string>
     <string name="repeats">Fechas de repetición</string>
     <string name="link1">Enlace 1</string>

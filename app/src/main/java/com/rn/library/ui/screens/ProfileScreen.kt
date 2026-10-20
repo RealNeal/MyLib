@@ -1270,11 +1270,13 @@ private fun ActivityHeatmap(
     }
 
     selected?.let { (date, totals) ->
+        val isMonthFirst = isMonthFirstDateOrder()
+        val pattern = if (isMonthFirst) "MM.dd.yyyy" else "dd.MM.yyyy"
         AlertDialog(
             onDismissRequest = { selected = null },
             title = {
                 Text(
-                    text = date.format(DateTimeFormatter.ofPattern("dd.MM.yyyy", locale)),
+                    text = date.format(DateTimeFormatter.ofPattern(pattern, locale)),
                     color = titleColorBetween
                 )
             },
@@ -1429,10 +1431,13 @@ private fun PeriodActivityChart(
         }
     }
     selectedBar?.let { bar ->
+        val isMonthFirst = isMonthFirstDateOrder()
+        val fullPattern = if (isMonthFirst) "MM.dd.yyyy" else "dd.MM.yyyy"
+        val shortPattern = if (isMonthFirst) "MM.dd" else "dd.MM"
         val titleText = if (bar.from == bar.to) {
-            bar.from.format(DateTimeFormatter.ofPattern("dd.MM.yyyy", locale))
+            bar.from.format(DateTimeFormatter.ofPattern(fullPattern, locale))
         } else {
-            "${bar.from.format(DateTimeFormatter.ofPattern("dd.MM", locale))} - ${bar.to.format(DateTimeFormatter.ofPattern("dd.MM", locale))}"
+            "${bar.from.format(DateTimeFormatter.ofPattern(shortPattern, locale))} - ${bar.to.format(DateTimeFormatter.ofPattern(shortPattern, locale))}"
         }
         AlertDialog(
             onDismissRequest = { selectedBar = null },

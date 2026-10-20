@@ -116,8 +116,8 @@
     <string name="symbols">symbols</string>
     <string name="symbols_genitive">symbols</string>
     <string name="increment_step_label">Increment step</string>
-    <string name="date_placeholder">YYYY-MM-DD</string>
-    <string name="reread_dates_placeholder">DD.MM.YYYY, one per line</string>
+    <string name="date_placeholder">MM.DD.YYYY</string>
+    <string name="reread_dates_placeholder">MM.DD.YYYY, one per line</string>
     <string name="repeats">Reread/Rewatch dates</string>
     <string name="link1">Link 1</string>
     <string name="link2">Link 2</string>

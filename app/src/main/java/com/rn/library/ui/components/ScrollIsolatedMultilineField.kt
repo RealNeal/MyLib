@@ -24,6 +24,8 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.TextRange
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.IntSize
 
@@ -43,6 +45,8 @@ fun ScrollIsolatedMultilineField(
     colors: TextFieldColors = TextFieldDefaults.colors(),
     placeholder: @Composable (() -> Unit)? = null,
     parentScrollState: ScrollState? = null,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     var isFocused by remember { mutableStateOf(false) }
@@ -155,6 +159,8 @@ fun ScrollIsolatedMultilineField(
             maxLines = maxLines,
             interactionSource = interactionSource,
             colors = colors,
+            visualTransformation = visualTransformation,
+            keyboardOptions = keyboardOptions,
         )
     }
 }

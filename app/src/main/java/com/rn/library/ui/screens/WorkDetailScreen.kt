@@ -138,6 +138,7 @@ fun WorkDetailScreen(
     val iconTextColor = IconTextColor()
     val searchBarColor = SearchBarColor()
     val fieldTextColor = if (currentTheme == AppTheme.DARK) Color.White else Color.Black
+    val isMonthFirst = isMonthFirstDateOrder()
 
     val statusLabel = when (work.status) {
         WorkStatus.READ -> stringResource(R.string.read)
@@ -177,11 +178,9 @@ fun WorkDetailScreen(
     val scrollState = remember(work.id) { ScrollState(initial = 0) }
     val coroutineScope = rememberCoroutineScope()
     val offsetX = remember(work.id) { Animatable(0f) }
-    val offsetY = remember(work.id) { Animatable(0f) }
 
     LaunchedEffect(work.id) {
         offsetX.snapTo(0f)
-        offsetY.snapTo(0f)
         scrollState.scrollTo(0)
     }
     val context = LocalContext.current
@@ -426,10 +425,8 @@ fun WorkDetailScreen(
                     WorkType.ANIME, WorkType.SERIES -> stringResource(R.string.date_watched)
                     else -> stringResource(R.string.date_read)
                 },
-                // Как в AddWorkScreen: храним только цифры DDMMYYYY, чтобы применить визуальную маску
-                value = work.dateRead?.split("-")?.let { parts ->
-                    if (parts.size == 3) parts[2].padStart(2, '0') + parts[1].padStart(2, '0') + parts[0] else work.dateRead.filter { c -> c.isDigit() }
-                }.orEmpty(),
+                // Как в AddWorkScreen: храним только цифры DDMMYYYY или MMDDYYYY, чтобы применить визуальную маску
+                value = formatStorageDateForInput(work.dateRead, isMonthFirst),
                 type = EditInfoType.DATE,
                 originalValue = work.dateRead
             )
@@ -442,7 +439,7 @@ fun WorkDetailScreen(
                     WorkType.ANIME, WorkType.SERIES -> stringResource(R.string.date_rewatch)
                     else -> stringResource(R.string.repeats)
                 },
-                value = formatRereadDatesForDisplay(work.rereadDates),
+                value = formatRereadDatesForInput(work.rereadDates, isMonthFirst),
                 type = EditInfoType.DATE_LIST,
                 originalValue = work.rereadDates
             )
@@ -469,14 +466,14 @@ fun WorkDetailScreen(
             .offset {
                 IntOffset(
                     offsetX.value.roundToInt().coerceAtLeast(0),
-                    offsetY.value.roundToInt().coerceAtLeast(0)
+                    0
                 )
             }
             .pointerInput(work.id) {
                 val touchSlop = viewConfiguration.touchSlop
                 awaitEachGesture {
                     val down = awaitFirstDown(pass = PointerEventPass.Initial)
-                    var swipeDirection = 0 // 0 = undefined, 1 = horizontal (right), 2 = vertical (down)
+                    var isSwiping = false
                     var totalX = 0f
                     var totalY = 0f
                     val dragStartTime = System.currentTimeMillis()
@@ -491,37 +488,25 @@ fun WorkDetailScreen(
                         totalX += delta.x
                         totalY += delta.y
 
-                        if (swipeDirection == 0) {
+                        if (!isSwiping) {
                             val absX = kotlin.math.abs(totalX)
                             val absY = kotlin.math.abs(totalY)
 
                             val isHorizontalRight = totalX > activationSlop && totalX > absY * 1.6f
-                            val isVerticalDown = scrollState.value == 0 && totalY > activationSlop && totalY > absX * 1.6f
 
                             if (isHorizontalRight) {
-                                swipeDirection = 1
+                                isSwiping = true
                                 change.consume()
                                 coroutineScope.launch {
                                     offsetX.snapTo((totalX - activationSlop).coerceIn(0f, size.width.toFloat()))
                                 }
-                            } else if (isVerticalDown) {
-                                swipeDirection = 2
-                                change.consume()
-                                coroutineScope.launch {
-                                    offsetY.snapTo((totalY - activationSlop).coerceIn(0f, size.height.toFloat()))
-                                }
-                            } else if (totalX < -touchSlop || (scrollState.value > 0 && absY > touchSlop) || totalY < -touchSlop) {
+                            } else if (totalX < -touchSlop || absY > touchSlop) {
                                 break
                             }
-                        } else if (swipeDirection == 1) {
+                        } else {
                             change.consume()
                             coroutineScope.launch {
                                 offsetX.snapTo((totalX - activationSlop).coerceIn(0f, size.width.toFloat()))
-                            }
-                        } else if (swipeDirection == 2) {
-                            change.consume()
-                            coroutineScope.launch {
-                                offsetY.snapTo((totalY - activationSlop).coerceIn(0f, size.height.toFloat()))
                             }
                         }
                     } while (event.changes.any { it.pressed })
@@ -536,10 +521,10 @@ fun WorkDetailScreen(
                         stiffness = Spring.StiffnessMediumLow
                     )
 
-                    if (swipeDirection == 1) {
+                    if (isSwiping) {
                         val velocityPxPerSec = (totalX / elapsed) * 1000f
-                        val isFling = velocityPxPerSec > 1350f && totalX > size.width * 0.35f
-                        val isDraggedFar = totalX > size.width * 0.52f || offsetX.value > size.width * 0.52f
+                        val isFling = velocityPxPerSec > 1100f && totalX > size.width * 0.25f
+                        val isDraggedFar = totalX > size.width * 0.43f || offsetX.value > size.width * 0.43f
                         coroutineScope.launch {
                             if (isDraggedFar || isFling) {
                                 offsetX.animateTo(
@@ -554,34 +539,15 @@ fun WorkDetailScreen(
                                 )
                             }
                         }
-                    } else if (swipeDirection == 2) {
-                        val velocityPxPerSec = (totalY / elapsed) * 1000f
-                        val isFling = velocityPxPerSec > 1350f && totalY > size.height * 0.28f
-                        val isDraggedFar = totalY > size.height * 0.42f || offsetY.value > size.height * 0.42f
-                        coroutineScope.launch {
-                            if (isDraggedFar || isFling) {
-                                offsetY.animateTo(
-                                    targetValue = size.height.toFloat(),
-                                    animationSpec = smoothDismissSpec
-                                )
-                                onBack()
-                            } else {
-                                offsetY.animateTo(
-                                    targetValue = 0f,
-                                    animationSpec = smoothCancelSpec
-                                )
-                            }
-                        }
                     }
                 }
             }
             .graphicsLayer {
-                val isSwiping = offsetX.value > 0f || offsetY.value > 0f
+                val isSwiping = offsetX.value > 0f
                 shadowElevation = if (isSwiping) 24.dp.toPx() else 0f
                 shape = RoundedCornerShape(
-                    topStart = if (offsetX.value > 0f || offsetY.value > 0f) 16.dp else 0.dp,
-                    bottomStart = if (offsetX.value > 0f) 16.dp else 0.dp,
-                    topEnd = if (offsetY.value > 0f) 16.dp else 0.dp
+                    topStart = if (isSwiping) 16.dp else 0.dp,
+                    bottomStart = if (isSwiping) 16.dp else 0.dp
                 )
                 clip = isSwiping
             }
@@ -1100,23 +1066,12 @@ fun WorkDetailScreen(
                     WorkType.ANIME, WorkType.SERIES -> stringResource(R.string.date_watched)
                     else -> stringResource(R.string.date_read)
                 }
-                // Конвертируем дату из YYYY-MM-DD в DD.MM.YYYY для отображения
-                val formattedDate = try {
-                    val parts = dateStr.split("-")
-                    if (parts.size == 3) {
-                        "${parts[2]}.${parts[1]}.${parts[0]}"
-                    } else {
-                        dateStr
-                    }
-                } catch (e: Exception) {
-                    dateStr
-                }
+                val formattedDate = formatStorageDateToDisplay(dateStr, isMonthFirst)
                 infoParts.add("$dateLabel: $formattedDate")
             }
             if (work.rereadDates.isNotEmpty()) {
                 val rereads = work.rereadDates.joinToString(", ") { date ->
-                    val parts = date.split("-")
-                    if (parts.size == 3) "${parts[2]}.${parts[1]}.${parts[0]}" else date
+                    formatStorageDateToDisplay(date, isMonthFirst)
                 }
                 val rereadLabel = when (work.type) {
                     WorkType.BOOK, WorkType.MANGA -> stringResource(R.string.date_reread)
@@ -1127,8 +1082,9 @@ fun WorkDetailScreen(
             }
             if (work.readingPeriods.isNotEmpty()) {
                 val periods = work.readingPeriods.joinToString("; ") { period ->
-                    val end = period.endDate ?: "..."
-                    "${period.startDate} - $end"
+                    val start = formatStorageDateToDisplay(period.startDate, isMonthFirst)
+                    val end = period.endDate?.let { formatStorageDateToDisplay(it, isMonthFirst) } ?: "..."
+                    "$start - $end"
                 }
                 val periodsLabel = stringResource(R.string.reading_periods_label)
                 infoParts.add("$periodsLabel: $periods")
@@ -1783,23 +1739,8 @@ fun WorkDetailScreen(
  * Преобразует дату из формата YYYY-MM-DD в ДД.ММ.ГГГГ
  * Если дата уже в формате ДД.ММ.ГГГГ, возвращает её без изменений
  */
-private fun convertDateFormat(date: String): String {
-    return try {
-        // Проверяем, является ли дата в формате YYYY-MM-DD
-        if (date.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) {
-            val parts = date.split("-")
-            if (parts.size == 3) {
-                "${parts[2]}.${parts[1]}.${parts[0]}"
-            } else {
-                date
-            }
-        } else {
-            // Если уже в формате ДД.ММ.ГГГГ или другом, возвращаем как есть
-            date
-        }
-    } catch (e: Exception) {
-        date
-    }
+private fun convertDateFormat(date: String, isMonthFirst: Boolean = false): String {
+    return formatStorageDateToDisplay(date, isMonthFirst)
 }
 
 @Composable
@@ -1844,6 +1785,7 @@ private fun EditInfoDialog(
     // Цвет для текста полей и лейблов: белый в тёмной теме, чёрный в светлой
     val fieldTextColor = if (currentTheme == AppTheme.DARK) Color.White else Color.Black
     val fieldHighlight = FieldHighlightColor()
+    val isMonthFirst = isMonthFirstDateOrder()
 
     var tempWork by remember { mutableStateOf(work) }
     var tempValues by remember { mutableStateOf(editInfoParts.toMutableList()) }
@@ -1928,14 +1870,15 @@ private fun EditInfoDialog(
                         ScrollIsolatedMultilineField(
                             value = textValue,
                             onValueChange = { newValue ->
-                                val filtered = filterRereadDatesInput(newValue)
+                                val filtered = filterRereadDatesInput(newValue, isMonthFirst)
                                 textValue = filtered
                                 tempValues[index] = item.copy(value = filtered)
                             },
                             label = { Text(item.label) },
-                            placeholder = { Text(stringResource(R.string.reread_dates_placeholder)) },
+                            placeholder = { Text(rereadDatesPlaceholder(isMonthFirst)) },
                             minLines = 1,
                             maxLines = if (isLandscape) 2 else 5,
+                            visualTransformation = DateVisualTransformation(),
                             colors = TextFieldDefaults.colors(
                                 focusedContainerColor = searchBarColor,
                                 unfocusedContainerColor = searchBarColor,
@@ -1958,8 +1901,9 @@ private fun EditInfoDialog(
                                 tempValues[index] = item.copy(value = digitsOnly)
                             },
                             label = { Text(item.label) },
-                            placeholder = { Text(stringResource(R.string.date_placeholder)) },
+                            placeholder = { Text(datePlaceholder(isMonthFirst)) },
                             visualTransformation = DateVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             colors = TextFieldDefaults.colors(
@@ -2223,11 +2167,7 @@ private fun EditInfoDialog(
                                             ?.filter { it.isDigit() }
                                             .orEmpty()
                                         val newDate = if (digits.length == 8) {
-                                            // DDMMYYYY -> YYYY-MM-DD
-                                            val day = digits.substring(0, 2)
-                                            val month = digits.substring(2, 4)
-                                            val year = digits.substring(4, 8)
-                                            "$year-$month-$day"
+                                            formatDateForSave(digits, isMonthFirst)
                                         } else if (item.value?.trim()?.matches(Regex("^\\d{4}-\\d{2}-\\d{2}$")) == true) {
                                             item.value!!.trim()
                                         } else if (digits.isEmpty() && item.originalValue != null) {
@@ -2239,7 +2179,7 @@ private fun EditInfoDialog(
                                     }
                                     "rereadDates" -> {
                                         updatedWork.copy(
-                                            rereadDates = parseRereadDatesForSave(item.value.orEmpty())
+                                            rereadDates = parseRereadDatesForSave(item.value.orEmpty(), isMonthFirst)
                                         )
                                     }
                                     "author" -> updatedWork.copy(author = item.value?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) })

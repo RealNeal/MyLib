@@ -116,7 +116,7 @@
     <string name="symbols">Zeichen</string>
     <string name="symbols_genitive">Zeichen</string>
     <string name="increment_step_label">Schrittgröße</string>
-    <string name="date_placeholder">JJJJ-MM-TT</string>
+    <string name="date_placeholder">TT.MM.JJJJ</string>
     <string name="reread_dates_placeholder">TT.MM.JJJJ, eine pro Zeile</string>
     <string name="repeats">Wiederholungen</string>
     <string name="link1">Link 1</string>

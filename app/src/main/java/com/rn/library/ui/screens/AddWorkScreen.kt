@@ -216,22 +216,14 @@ fun AddWorkScreen(
         mutableStateOf(work?.yearPeriod ?: work?.year?.toString().orEmpty())
     }
 
-    // Инициализация дат в формате ДДММГГГГ для отображения
-    var dateRead by remember(work?.dateRead) {
-        mutableStateOf(
-            work?.dateRead?.let { date ->
-                val clean = date.trim()
-                val parts = clean.split("-")
-                if (parts.size == 3) {
-                    parts[2].padStart(2, '0') + parts[1].padStart(2, '0') + parts[0]
-                } else {
-                    clean.filter { it.isDigit() }.take(8)
-                }
-            } ?: ""
-        )
+    val isMonthFirst = isMonthFirstDateOrder()
+
+    // Инициализация дат в формате ДДММГГГГ или ММДДГГГГ для отображения
+    var dateRead by remember(work?.dateRead, isMonthFirst) {
+        mutableStateOf(formatStorageDateForInput(work?.dateRead, isMonthFirst))
     }
-    var rereadDatesText by remember(work?.rereadDates) {
-        mutableStateOf(formatRereadDatesForDisplay(work?.rereadDates.orEmpty()))
+    var rereadDatesText by remember(work?.rereadDates, isMonthFirst) {
+        mutableStateOf(formatRereadDatesForInput(work?.rereadDates.orEmpty(), isMonthFirst))
     }
     var linksText by remember(work?.link, work?.link2, work?.links) {
         mutableStateOf(work?.allLinks()?.joinToString("\n") ?: "")
@@ -310,52 +302,6 @@ fun AddWorkScreen(
     // Валидация года: YYYY или период YYYY - YYYY
     val singleYearPattern = Pattern.compile("^\\d{0,4}$")
     val yearPeriodPattern = Pattern.compile("^\\d{4}\\s?-\\s?\\d{0,4}$")
-
-    // Визуальное преобразование для форматирования даты ДД.ММ.ГГГГ
-    val dateVisualTransformation = VisualTransformation { text ->
-        val digits = text.text.replace("[^0-9]".toRegex(), "")
-        val formatted = StringBuilder()
-        for (i in digits.indices) {
-            if (i == 2 || i == 4) {
-                if (formatted.length < 10) formatted.append(".")
-            }
-            if (formatted.length < 10) formatted.append(digits[i])
-        }
-        TransformedText(
-            text = AnnotatedString(formatted.toString()),
-            offsetMapping = object : OffsetMapping {
-                override fun originalToTransformed(offset: Int): Int {
-                    var transformedOffset = offset
-                    if (offset > 2) transformedOffset++
-                    if (offset > 4) transformedOffset++
-                    return transformedOffset.coerceAtMost(formatted.length)
-                }
-
-                override fun transformedToOriginal(offset: Int): Int {
-                    var originalOffset = offset
-                    if (offset > 2) originalOffset--
-                    if (offset > 5) originalOffset--
-                    return originalOffset.coerceAtMost(digits.length)
-                }
-            }
-        )
-    }
-
-    // Форматирование даты для сохранения (только цифры)
-    fun formatDateForSave(input: String): String {
-        val trimmed = input.trim()
-        if (trimmed.matches(Regex("^\\d{4}-\\d{2}-\\d{2}$"))) {
-            return trimmed
-        }
-        val digits = trimmed.filter { it.isDigit() }
-        if (digits.length >= 8) {
-            val day = digits.substring(0, 2)
-            val month = digits.substring(2, 4)
-            val year = digits.substring(4, 8)
-            return "$year-$month-$day"
-        }
-        return ""
-    }
 
     // Форматирование альтернативных названий для сохранения (преобразование переносов в точки с запятой)
     fun formatAlternativeTitlesForSave(input: String): String {
@@ -1077,8 +1023,8 @@ fun AddWorkScreen(
                     ) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    placeholder = { Text(stringResource(R.string.date_placeholder)) },
-                    visualTransformation = dateVisualTransformation,
+                    placeholder = { Text(datePlaceholder(isMonthFirst)) },
+                    visualTransformation = DateVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     colors = fieldColors
                 )
@@ -1086,7 +1032,7 @@ fun AddWorkScreen(
 
             ScrollIsolatedMultilineField(
                 value = rereadDatesText,
-                onValueChange = { rereadDatesText = filterRereadDatesInput(it) },
+                onValueChange = { rereadDatesText = filterRereadDatesInput(it, isMonthFirst) },
                 label = {
                     Text(
                         when (type) {
@@ -1096,9 +1042,10 @@ fun AddWorkScreen(
                         }
                     )
                 },
-                placeholder = { Text(stringResource(R.string.reread_dates_placeholder)) },
+                placeholder = { Text(rereadDatesPlaceholder(isMonthFirst)) },
                 minLines = 1,
                 maxLines = 5,
+                visualTransformation = DateVisualTransformation(),
                 colors = fieldColors,
                 parentScrollState = formScrollState,
             )
@@ -1156,7 +1103,7 @@ fun AddWorkScreen(
             Button(
                 onClick = {
                     val id = stableWorkId
-                    val rereadSaved = parseRereadDatesForSave(rereadDatesText)
+                    val rereadSaved = parseRereadDatesForSave(rereadDatesText, isMonthFirst)
 
                     val workToSave = Work(
                         // Год может быть либо одиночным, либо периодом.
@@ -1194,7 +1141,7 @@ fun AddWorkScreen(
                         yearPeriod = year.trim()
                             .takeIf { yearPeriodPattern.matcher(it).matches() }
                             ?.replace(Regex("\\s*-\\s*"), " - "),
-                        dateRead = formatDateForSave(dateRead).ifEmpty { null },
+                        dateRead = formatDateForSave(dateRead, isMonthFirst).ifEmpty { null },
                         rereadDates = rereadSaved,
                         link = parseLinksList(linksText).getOrNull(0),
                         link2 = parseLinksList(linksText).getOrNull(1),

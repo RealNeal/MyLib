@@ -28,7 +28,7 @@ object JikanClient {
         return Pair(type, id)
     }
 
-    private const val SHIKI_BASE = "https://shikimori.io/api"
+    private fun getShikiBase(): String = "${ShikimoriClient.getBaseUrl()}/api"
     private const val SHIKI_UA = "MyLibraryApp/2.7 (Android; github.com/RealNeal/MyLib)"
 
     suspend fun search(
@@ -38,28 +38,29 @@ object JikanClient {
         try {
             val encoded = URLEncoder.encode(query.trim(), "UTF-8")
             val list = mutableListOf<ShikimoriSearchResult>()
+            val shikiBase = getShikiBase()
 
             val searchAnime = filter == ShikimoriFilterType.ALL || filter == ShikimoriFilterType.ANIME
             val searchManga = filter == ShikimoriFilterType.ALL || filter == ShikimoriFilterType.MANGA || filter == ShikimoriFilterType.RANOBE
 
             if (searchAnime && searchManga) {
                 val animeDeferred = async {
-                    val animeUrl = "$SHIKI_BASE/animes?search=$encoded&limit=15"
+                    val animeUrl = "$shikiBase/animes?search=$encoded&limit=15"
                     fetchShikiMalSearchResults(animeUrl, "anime", WorkType.ANIME)
                 }
                 val mangaDeferred = async {
                     val kindParam = if (filter == ShikimoriFilterType.RANOBE) "&kind=light_novel,novel" else ""
-                    val mangaUrl = "$SHIKI_BASE/mangas?search=$encoded$kindParam&limit=15"
+                    val mangaUrl = "$shikiBase/mangas?search=$encoded$kindParam&limit=15"
                     fetchShikiMalSearchResults(mangaUrl, "manga", if (filter == ShikimoriFilterType.RANOBE) WorkType.BOOK else WorkType.MANGA)
                 }
                 list.addAll(animeDeferred.await())
                 list.addAll(mangaDeferred.await())
             } else if (searchAnime) {
-                val animeUrl = "$SHIKI_BASE/animes?search=$encoded&limit=15"
+                val animeUrl = "$shikiBase/animes?search=$encoded&limit=15"
                 list.addAll(fetchShikiMalSearchResults(animeUrl, "anime", WorkType.ANIME))
             } else if (searchManga) {
                 val kindParam = if (filter == ShikimoriFilterType.RANOBE) "&kind=light_novel,novel" else ""
-                val mangaUrl = "$SHIKI_BASE/mangas?search=$encoded$kindParam&limit=15"
+                val mangaUrl = "$shikiBase/mangas?search=$encoded$kindParam&limit=15"
                 list.addAll(fetchShikiMalSearchResults(mangaUrl, "manga", if (filter == ShikimoriFilterType.RANOBE) WorkType.BOOK else WorkType.MANGA))
             }
 
@@ -77,7 +78,7 @@ object JikanClient {
             val data = json?.optJSONObject("data")
             if (data == null) {
                 val shikiEndpoint = if (ep == "anime") "animes" else "mangas"
-                val shikiUrl = "$SHIKI_BASE/$shikiEndpoint/$id"
+                val shikiUrl = "${getShikiBase()}/$shikiEndpoint/$id"
                 val shikiJson = fetchJsonWithHeaders(shikiUrl, SHIKI_UA)
                 if (shikiJson != null) {
                     return@withContext parseShikiMalDetails(shikiJson, ep, id)

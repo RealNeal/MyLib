@@ -12,6 +12,8 @@ object RoyalRoadClient {
     private const val BASE_URL = "https://www.royalroad.com"
     private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+    fun getBaseUrl(): String = ParserDomainManager.getDomain(ParserDomainManager.SOURCE_ROYALROAD).ifBlank { BASE_URL }
+
     fun isRoyalRoadUrl(url: String): Boolean {
         return url.contains("royalroad.com/fiction/", ignoreCase = true)
     }
@@ -25,12 +27,13 @@ object RoyalRoadClient {
         try {
             val cleanQuery = query.trim()
             val encoded = URLEncoder.encode(cleanQuery, "UTF-8")
-            var html = fetchHtml("$BASE_URL/fictions/search?title=$encoded")
+            val base = getBaseUrl()
+            var html = fetchHtml("$base/fictions/search?title=$encoded")
             var list = html?.let { parseSearchResults(it) }.orEmpty()
 
             // If title search yielded no results, fallback to keyword search
             if (list.isEmpty()) {
-                val keywordHtml = fetchHtml("$BASE_URL/fictions/search?keyword=$encoded")
+                val keywordHtml = fetchHtml("$base/fictions/search?keyword=$encoded")
                 if (keywordHtml != null) {
                     list = parseSearchResults(keywordHtml)
                 }
@@ -41,8 +44,8 @@ object RoyalRoadClient {
                 val simplified = cleanQuery.replace(Regex("""[^\p{L}\p{Nd}\s]"""), " ").trim().replace(Regex("""\s+"""), " ")
                 if (simplified.isNotBlank() && simplified != cleanQuery) {
                     val simpEncoded = URLEncoder.encode(simplified, "UTF-8")
-                    val simpHtml = fetchHtml("$BASE_URL/fictions/search?title=$simpEncoded")
-                        ?: fetchHtml("$BASE_URL/fictions/search?keyword=$simpEncoded")
+                    val simpHtml = fetchHtml("$base/fictions/search?title=$simpEncoded")
+                        ?: fetchHtml("$base/fictions/search?keyword=$simpEncoded")
                     if (simpHtml != null) {
                         list = parseSearchResults(simpHtml)
                     }
@@ -130,7 +133,7 @@ object RoyalRoadClient {
 
     suspend fun fetchDetails(fictionId: Long): Result<ParsedWorkMetadata> = withContext(Dispatchers.IO) {
         try {
-            val novelUrl = "$BASE_URL/fiction/$fictionId"
+            val novelUrl = "${getBaseUrl()}/fiction/$fictionId"
             val html = fetchHtml(novelUrl) ?: return@withContext Result.failure(Exception("Не удалось загрузить страницу новеллы Royal Road"))
 
             var title = ""
@@ -231,22 +234,10 @@ object RoyalRoadClient {
         }
     }
 
-    private fun fetchHtml(urlString: String): String? {
-        val url = URL(urlString)
-        val conn = url.openConnection() as HttpURLConnection
-        return try {
-            conn.instanceFollowRedirects = true
-            conn.setRequestProperty("User-Agent", USER_AGENT)
-            conn.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            conn.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
-            conn.connectTimeout = 12000
-            conn.readTimeout = 15000
-            if (conn.responseCode !in 200..299) return null
-            conn.inputStream.bufferedReader().use { it.readText() }
-        } catch (e: Exception) {
-            null
-        } finally {
-            conn.disconnect()
-        }
+    private suspend fun fetchHtml(urlString: String): String? {
+        return CloudflareBypasser.fetchHtmlWithFallback(
+            urlStr = urlString,
+            referer = "${getBaseUrl()}/"
+        )
     }
 }

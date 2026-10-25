@@ -9,7 +9,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Автоматически сохраняет рабочий домен и переключается на зеркала при блокировках или смене доменов.
  */
 object ParserDomainManager {
-    private const val PREFS_NAME = "parser_domain_cache"
+    private const val PREFS_NAME = "parser_domain_cache_v32"
 
     const val SOURCE_LIB_SOCIAL_API = "lib_social_api"
     const val SOURCE_ANIMELIB_WEB = "animelib_web"
@@ -24,9 +24,12 @@ object ParserDomainManager {
     const val SOURCE_SCRIBBLEHUB = "scribblehub"
     const val SOURCE_MANGABUFF = "mangabuff"
     const val SOURCE_ANIMETKA = "animetka"
+    const val SOURCE_ROYALROAD = "royalroad"
+    const val SOURCE_ANILIBERTY = "aniliberty"
 
     private val DEFAULT_MIRRORS = mapOf(
         SOURCE_LIB_SOCIAL_API to listOf(
+            "https://api.lib.social/api",
             "https://api.cdnlibs.org/api"
         ),
         SOURCE_ANIMELIB_WEB to listOf(
@@ -46,8 +49,8 @@ object ParserDomainManager {
             "https://ranobe.lib.social"
         ),
         SOURCE_RANOBES to listOf(
-            "https://ranobes.net",
             "https://ranobes.top",
+            "https://ranobes.net",
             "https://ranobes.org",
             "https://ranobes.com"
         ),
@@ -59,16 +62,16 @@ object ParserDomainManager {
         SOURCE_ANIXART_API to listOf(
             "https://api.anixsekai.com",
             "https://api-s.anixsekai.com",
-            "https://api.anixmirai.com"
+            "https://api.anixart.tv"
         ),
         SOURCE_RANOBEHUB to listOf(
             "https://ranobehub.org",
             "https://ranobehub.com"
         ),
         SOURCE_SHIKIMORI to listOf(
+            "https://shikimori.io",
             "https://shikimori.one",
-            "https://shikimori.me",
-            "https://shikimori.io"
+            "https://shikimori.me"
         ),
         SOURCE_REMANGA to listOf(
             "https://remanga.org",
@@ -83,6 +86,14 @@ object ParserDomainManager {
         ),
         SOURCE_ANIMETKA to listOf(
             "https://animetka.com"
+        ),
+        SOURCE_ROYALROAD to listOf(
+            "https://www.royalroad.com",
+            "https://royalroad.com"
+        ),
+        SOURCE_ANILIBERTY to listOf(
+            "https://anilibria.top/api/v1",
+            "https://aniliberty.top/api/v1"
         )
     )
 

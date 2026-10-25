@@ -415,8 +415,8 @@ object ShikimoriClient {
         val conn = url.openConnection() as HttpURLConnection
         conn.setRequestProperty("User-Agent", USER_AGENT)
         conn.setRequestProperty("Accept", "application/json")
-        conn.connectTimeout = 8000
-        conn.readTimeout = 12000
+        conn.connectTimeout = 4000
+        conn.readTimeout = 6000
         return conn
     }
 
@@ -433,8 +433,8 @@ object ShikimoriClient {
                     setRequestProperty("User-Agent", USER_AGENT)
                     setRequestProperty("Content-Type", "application/json")
                     setRequestProperty("Accept", "application/json")
-                    connectTimeout = 8000
-                    readTimeout = 8000
+                    connectTimeout = 4000
+                    readTimeout = 6000
                     doOutput = true
                 }
                 val body = JSONObject().put("query", query).toString()

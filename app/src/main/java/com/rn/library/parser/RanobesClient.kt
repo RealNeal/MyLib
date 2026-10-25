@@ -210,7 +210,7 @@ object RanobesClient {
 
 
 
-    private fun fetchHtml(pathOrUrl: String): String? {
+    private suspend fun fetchHtml(pathOrUrl: String): String? {
         val cleanPath = if (pathOrUrl.startsWith("http")) {
             val uri = try { URL(pathOrUrl) } catch (_: Exception) { null }
             uri?.file ?: pathOrUrl
@@ -219,7 +219,7 @@ object RanobesClient {
         val mirrors = ParserDomainManager.getMirrors(ParserDomainManager.SOURCE_RANOBES)
         for (mirror in mirrors) {
             val fullUrl = if (cleanPath.startsWith("http")) cleanPath else "$mirror$cleanPath"
-            val html = executeFetchHtmlWithRedirects(fullUrl, mirror)
+            val html = CloudflareBypasser.fetchHtmlWithFallback(fullUrl, referer = "$mirror/")
             if (html != null) {
                 if (!cleanPath.startsWith("http")) {
                     ParserDomainManager.reportWorking(ParserDomainManager.SOURCE_RANOBES, mirror)
@@ -227,41 +227,6 @@ object RanobesClient {
                 return html
             } else if (!cleanPath.startsWith("http")) {
                 ParserDomainManager.reportFailure(ParserDomainManager.SOURCE_RANOBES, mirror)
-            }
-        }
-        return null
-    }
-
-    private fun executeFetchHtmlWithRedirects(startUrl: String, baseMirror: String): String? {
-        var currentUrl = startUrl
-        for (i in 0 until 5) {
-            val conn = try {
-                URL(currentUrl).openConnection() as HttpURLConnection
-            } catch (_: Exception) { return null }
-
-            try {
-                conn.instanceFollowRedirects = false
-                conn.setRequestProperty("User-Agent", USER_AGENT)
-                conn.setRequestProperty("Referer", "$baseMirror/")
-                conn.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                conn.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
-                conn.connectTimeout = 8000
-                conn.readTimeout = 12000
-
-                val code = conn.responseCode
-                if (code in 300..399) {
-                    val loc = conn.getHeaderField("Location") ?: return null
-                    currentUrl = if (loc.startsWith("http")) loc else "$baseMirror$loc"
-                    continue
-                }
-                if (code in 200..299) {
-                    return conn.inputStream.bufferedReader().use { it.readText() }
-                }
-                return null
-            } catch (e: Exception) {
-                return null
-            } finally {
-                conn.disconnect()
             }
         }
         return null

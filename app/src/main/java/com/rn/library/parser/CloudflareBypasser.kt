@@ -48,10 +48,14 @@ object CloudflareBypasser {
                 lower.contains("id=\"cf-challenge-running\"") ||
                 lower.contains("id=\"challenge-form\"") ||
                 lower.contains("class=\"cf-browser-verification\"") ||
+                lower.contains("browser_check=") ||
+                lower.contains("ddos-guard") ||
+                lower.contains("security check") ||
+                lower.contains("enable javascript and cookies to continue") ||
                 (lower.contains("id=\"cf-wrapper\"") && lower.contains("ray id:"))
     }
 
-    private fun fetchDirect(urlStr: String, referer: String?): String? {
+    private fun fetchDirect(urlStr: String, referer: String?, retryCount: Int = 1): String? {
         return try {
             val url = URL(urlStr)
             val conn = url.openConnection() as HttpURLConnection
@@ -61,7 +65,7 @@ object CloudflareBypasser {
                 conn.setRequestProperty("Referer", referer)
             }
             conn.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-            conn.setRequestProperty("Accept-Language", "en-US,en;q=0.9,ru;q=0.8")
+            conn.setRequestProperty("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
             conn.setRequestProperty("Sec-Ch-Ua", "\"Chromium\";v=\"124\", \"Android WebView\";v=\"124\"")
             conn.setRequestProperty("Sec-Ch-Ua-Mobile", "?1")
             conn.setRequestProperty("Sec-Ch-Ua-Platform", "\"Android\"")
@@ -82,20 +86,43 @@ object CloudflareBypasser {
                 conn.setRequestProperty("Cookie", fullCookie)
             }
 
-            conn.connectTimeout = 10000
-            conn.readTimeout = 12000
-            if (conn.responseCode in 200..299) {
-                val setCookies = conn.headerFields["Set-Cookie"]
-                if (setCookies != null && cookieManager != null) {
-                    for (c in setCookies) {
-                        try {
-                            cookieManager.setCookie(urlStr, c)
-                        } catch (_: Exception) {}
-                    }
-                    cookieManager.flush()
+            conn.connectTimeout = 8000
+            conn.readTimeout = 10000
+
+            // Save set cookies from headers regardless of responseCode
+            val setCookies = conn.headerFields["Set-Cookie"]
+            if (setCookies != null && cookieManager != null) {
+                for (c in setCookies) {
+                    try {
+                        cookieManager.setCookie(urlStr, c)
+                    } catch (_: Exception) {}
                 }
+                cookieManager.flush()
+            }
+
+            val code = conn.responseCode
+            val rawText = if (code in 200..299) {
                 conn.inputStream.bufferedReader().use { it.readText() }
-            } else null
+            } else {
+                conn.errorStream?.bufferedReader()?.use { it.readText() }
+            }
+
+            if (rawText != null) {
+                // Check for Ranobes / DDoS check browser_check cookie token
+                val browserCheckMatch = Regex("""browser_check\s*=\s*['"]?([a-zA-Z0-9_\-:]+)""").find(rawText)
+                if (browserCheckMatch != null && cookieManager != null && retryCount > 0) {
+                    val token = browserCheckMatch.groupValues[1]
+                    cookieManager.setCookie(urlStr, "browser_check=$token; path=/")
+                    cookieManager.flush()
+                    conn.disconnect()
+                    return fetchDirect(urlStr, referer, retryCount - 1)
+                }
+
+                if (code in 200..299 && !isCloudflareChallenge(rawText)) {
+                    return rawText
+                }
+            }
+            null
         } catch (_: Exception) {
             null
         }

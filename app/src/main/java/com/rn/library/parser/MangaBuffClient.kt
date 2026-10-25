@@ -30,24 +30,25 @@ object MangaBuffClient {
     suspend fun search(query: String): Result<List<ShikimoriSearchResult>> = withContext(Dispatchers.IO) {
         try {
             val encoded = URLEncoder.encode(query.trim(), "UTF-8")
-            val url = "${getBaseUrl()}/search?q=$encoded&type=manga"
+            val url = "${getBaseUrl()}/manga?search=$encoded"
             val html = fetchHtml(url) ?: return@withContext Result.failure(Exception("Пустой ответ от MangaBuff"))
 
             val list = mutableListOf<ShikimoriSearchResult>()
             val cardRegex = Regex(
-                """<a\s+href="https?://mangabuff\.ru/manga/([a-zA-Z0-9_\-]+)"\s+class="cards__item"(?:[^>]*data-id="(\d+)")?[^>]*>([\s\S]*?)</a>""",
+                """<a\b[^>]*?href=["'](?:https?://[^/]+)?/manga/([a-zA-Z0-9_\-]+)["'][^>]*?class=["'][^"']*?cards__item[^"']*?["'][^>]*?>([\s\S]*?)</a>|""" +
+                """<a\b[^>]*?class=["'][^"']*?cards__item[^"']*?["'][^>]*?href=["'](?:https?://[^/]+)?/manga/([a-zA-Z0-9_\-]+)["'][^>]*?>([\s\S]*?)</a>""",
                 RegexOption.IGNORE_CASE
             )
 
             val matches = cardRegex.findAll(html)
             for (match in matches) {
-                val slug = match.groupValues[1]
-                val idStr = match.groupValues[2]
-                val cardContent = match.groupValues[3]
+                val slug = match.groupValues[1].ifBlank { match.groupValues[3] }
+                val cardContent = match.groupValues[2].ifBlank { match.groupValues[4] }
 
-                if (slug in setOf("top", "new", "ongoing", "completed", "popular")) continue
+                if (slug.isBlank() || slug in setOf("top", "new", "ongoing", "completed", "popular")) continue
 
-                val id = idStr.toLongOrNull() ?: (slug.hashCode().toLong() and 0x7FFFFFFF)
+                val dataId = Regex("""data-id="(\d+)"""").find(match.value)?.groupValues?.get(1)?.toLongOrNull()
+                val id = dataId ?: (slug.hashCode().toLong() and 0x7FFFFFFF)
 
                 val nameRegex = Regex("""<div class="cards__name">([^<]+)</div>""", RegexOption.IGNORE_CASE)
                 val rawName = nameRegex.find(cardContent)?.groupValues?.get(1)?.trim().orEmpty()
@@ -204,28 +205,7 @@ object MangaBuffClient {
         }
     }
 
-    private fun fetchHtml(urlStr: String): String? {
-        var conn: HttpURLConnection? = null
-        return try {
-            val url = URL(urlStr)
-            conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.connectTimeout = 12000
-            conn.readTimeout = 12000
-            conn.setRequestProperty("User-Agent", USER_AGENT)
-            conn.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            conn.setRequestProperty("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-            conn.setRequestProperty("Referer", "https://mangabuff.ru/")
-            conn.instanceFollowRedirects = true
-            if (conn.responseCode == HttpURLConnection.HTTP_OK) {
-                conn.inputStream.bufferedReader().use { it.readText() }
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            null
-        } finally {
-            conn?.disconnect()
-        }
+    private suspend fun fetchHtml(urlStr: String): String? {
+        return CloudflareBypasser.fetchHtmlWithFallback(urlStr, referer = "https://mangabuff.ru/")
     }
 }

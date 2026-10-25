@@ -477,7 +477,7 @@ fun WorkDetailScreen(
                     var totalX = 0f
                     var totalY = 0f
                     val dragStartTime = System.currentTimeMillis()
-                    val activationSlop = touchSlop * 1.8f
+                    val activationSlop = touchSlop * 1.2f
 
                     do {
                         val event = awaitPointerEvent(pass = PointerEventPass.Initial)
@@ -492,7 +492,7 @@ fun WorkDetailScreen(
                             val absX = kotlin.math.abs(totalX)
                             val absY = kotlin.math.abs(totalY)
 
-                            val isHorizontalRight = totalX > activationSlop && totalX > absY * 1.6f
+                            val isHorizontalRight = totalX > activationSlop && totalX > absY * 1.2f
 
                             if (isHorizontalRight) {
                                 isSwiping = true
@@ -500,7 +500,7 @@ fun WorkDetailScreen(
                                 coroutineScope.launch {
                                     offsetX.snapTo((totalX - activationSlop).coerceIn(0f, size.width.toFloat()))
                                 }
-                            } else if (totalX < -touchSlop || absY > touchSlop) {
+                            } else if (totalX < -touchSlop || (absY > touchSlop * 2f && absY > absX * 1.5f)) {
                                 break
                             }
                         } else {
@@ -523,8 +523,8 @@ fun WorkDetailScreen(
 
                     if (isSwiping) {
                         val velocityPxPerSec = (totalX / elapsed) * 1000f
-                        val isFling = velocityPxPerSec > 1100f && totalX > size.width * 0.25f
-                        val isDraggedFar = totalX > size.width * 0.43f || offsetX.value > size.width * 0.43f
+                        val isFling = velocityPxPerSec > 900f && totalX > activationSlop
+                        val isDraggedFar = totalX > size.width * 0.25f || offsetX.value > size.width * 0.25f
                         coroutineScope.launch {
                             if (isDraggedFar || isFling) {
                                 offsetX.animateTo(

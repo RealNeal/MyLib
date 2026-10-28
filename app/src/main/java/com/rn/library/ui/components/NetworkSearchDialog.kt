@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -401,7 +402,6 @@ fun NetworkSearchDialog(
                     }
                 }
 
-
                 Spacer(modifier = Modifier.height(6.dp))
 
                 val fieldHighlight = FieldHighlightColor()
@@ -527,14 +527,17 @@ fun NetworkSearchDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Content area
+                // Content area (where works are displayed)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
+                        .weight(1f)
                 ) {
-                    when {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        when {
                         isImportingDetails -> {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -594,6 +597,23 @@ fun NetworkSearchDialog(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.bodyMedium
                                 )
+                                if (currentSource == MediaSource.SCRIBBLEHUB) {
+                                    Text(
+                                        text = stringResource(R.string.source_warning_scribblehub),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+                                    )
+                                } else if (currentSource == MediaSource.RANOBES) {
+                                    Text(
+                                        text = stringResource(R.string.source_warning_ranobes),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+                                    )
+                                }
                             }
                         }
                         searchResults.isEmpty() -> {
@@ -656,9 +676,45 @@ fun NetworkSearchDialog(
                             }
                         }
                     }
+
+                    // Source warning / tip inside works display area (disappears when works appear, floats at top without shifting center)
+                    if (searchResults.isEmpty()) {
+                        currentSource.warningRes?.let { wRes ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .align(Alignment.TopCenter)
+                                    .padding(bottom = 8.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f)
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = stringResource(wRes),
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                        lineHeight = 16.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
     }
 }
 
@@ -688,7 +744,13 @@ private fun NetworkResultItem(
                         val url = item.coverUrl.orEmpty()
                         val referer = when {
                             url.contains("mangabuff") -> "https://mangabuff.ru/"
-                            url.contains("cdnlibs") || url.contains("mangalib") -> "https://mangalib.me/"
+                            url.contains("imglib") || url.contains("cdnlibs") || url.contains("lib.social") || url.contains("mangalib") -> {
+                                when {
+                                    url.contains("ranobelib") || url.contains("ranobe") -> "https://ranobelib.me/"
+                                    url.contains("animelib") || url.contains("anime") -> "https://animelib.me/"
+                                    else -> "https://mangalib.me/"
+                                }
+                            }
                             url.contains("ranobelib") -> "https://ranobelib.me/"
                             url.contains("animelib") -> "https://animelib.me/"
                             url.contains("anixmirai") || url.contains("anixart") -> "https://anixart.tv/"

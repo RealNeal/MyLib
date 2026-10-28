@@ -247,13 +247,13 @@ fun AddWorkScreen(
     }
     val existingGenres = remember {
         GenreTagTranslator.translateAndNormalizeChips(
-            repository.getAllWorks().flatMap { it.genres.orEmpty() } + defaultGenres,
+            repository.getAllWorks().flatMap { it.genres.orEmpty() } + defaultGenres + com.rn.library.data.GenreTagManager.getCustomGenres(context),
             Language.RUSSIAN
         ).sorted()
     }
     val existingTags = remember {
         GenreTagTranslator.translateAndNormalizeChips(
-            repository.getAllWorks().flatMap { it.tags.orEmpty() },
+            repository.getAllWorks().flatMap { it.tags.orEmpty() } + com.rn.library.data.GenreTagManager.getCustomTags(context),
             Language.RUSSIAN
         ).sorted()
     }

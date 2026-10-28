@@ -26,9 +26,8 @@ object ScribbleHubClient {
 
     private const val DEFAULT_BASE_URL = "https://www.scribblehub.com"
     private const val API_PATH = "/wp-json/fictionapp/v1"
-    private const val USER_AGENT =
-        "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-    private const val MAX_PAGES_TO_FETCH = 2
+    private const val USER_AGENT = "Dart/3.0 (dart:io)"
+    private const val MAX_PAGES_TO_FETCH = 5
     private const val STORIES_PER_PAGE = 50
 
     private fun getBaseUrl(): String {
@@ -90,7 +89,7 @@ object ScribbleHubClient {
             val collectedResults = ConcurrentHashMap<Long, ShikimoriSearchResult>()
             val collectedAuthors = ConcurrentHashMap<Long, String>()
 
-            // 2. Варианты запроса (исходный + транслит/перевод при кириллице + структурные сегменты)
+            // 2. Варианты запроса (исходный + нормализация пунктуации + транслит/перевод при кириллице + сегменты)
             val searchVariations = generateSearchVariations(cleanQuery)
             val primaryQuery = searchVariations.firstOrNull() ?: cleanQuery
 
@@ -118,7 +117,7 @@ object ScribbleHubClient {
                 collectedResults.putIfAbsent(story.id, story)
             }
 
-            // 4. Пагинация: если доступно больше 1 страницы, параллельно выгружаем все страницы
+            // 4. Пагинация: если доступно больше 1 страницы, параллельно выгружаем страницы
             if (firstPageResp.totalPages > 1) {
                 val pagesToFetch = (2..minOf(firstPageResp.totalPages, MAX_PAGES_TO_FETCH)).toList()
                 val additionalPages = pagesToFetch.map { p ->
@@ -132,13 +131,19 @@ object ScribbleHubClient {
                 }
             }
 
-            // 5. Если по первичному запросу результатов мало, опрашиваем дополнительные вариации
-            val secondaryVariations = searchVariations.drop(1).take(4)
-            if (collectedResults.size < 5 && secondaryVariations.isNotEmpty()) {
+            // 5. Опрашиваем вариации, если нет строгого совпадения или результатов мало
+            val secondaryVariations = searchVariations.drop(1).take(5)
+            if ((collectedResults.size < 25 || !hasStrongMatch(cleanQuery, collectedResults.values)) && secondaryVariations.isNotEmpty()) {
                 val variationDeferred = secondaryVariations.map { variation ->
                     async {
-                        val p1 = queryStoriesPage(variation, page = 1, perPage = STORIES_PER_PAGE)
                         val extraList = mutableListOf<ShikimoriSearchResult>()
+                        val sApi = querySearchApi(variation)
+                        extraList.addAll(sApi.stories)
+                        for (author in sApi.authors) {
+                            collectedAuthors.putIfAbsent(author.first, author.second)
+                        }
+
+                        val p1 = queryStoriesPage(variation, page = 1, perPage = STORIES_PER_PAGE)
                         extraList.addAll(p1.stories)
                         if (p1.totalPages > 1) {
                             val extraPages = (2..minOf(p1.totalPages, 3)).map { p ->
@@ -155,7 +160,7 @@ object ScribbleHubClient {
             }
 
             // 6. Если найдено мало результатов, но нашлись авторы, догружаем их истории
-            if (collectedResults.size < 3 && collectedAuthors.isNotEmpty()) {
+            if (collectedResults.size < 5 && collectedAuthors.isNotEmpty()) {
                 val authorStoriesDeferred = collectedAuthors.keys.take(5).map { authorId ->
                     async {
                         fetchStoriesByAuthor(authorId)
@@ -256,6 +261,7 @@ object ScribbleHubClient {
             conn.setRequestProperty("User-Agent", USER_AGENT)
             conn.setRequestProperty("Accept", "application/json")
             conn.setRequestProperty("Referer", "$DEFAULT_BASE_URL/")
+            conn.setRequestProperty("Cookie", "mature=1; sh_mature=1; birthdate=1990-01-01; adult=1")
             conn.connectTimeout = 8000
             conn.readTimeout = 12000
 
@@ -297,6 +303,7 @@ object ScribbleHubClient {
             conn.setRequestProperty("User-Agent", USER_AGENT)
             conn.setRequestProperty("Accept", "application/json")
             conn.setRequestProperty("Referer", "$DEFAULT_BASE_URL/")
+            conn.setRequestProperty("Cookie", "mature=1; sh_mature=1; birthdate=1990-01-01; adult=1")
             conn.connectTimeout = 8000
             conn.readTimeout = 10000
 
@@ -327,6 +334,7 @@ object ScribbleHubClient {
             conn.setRequestProperty("User-Agent", USER_AGENT)
             conn.setRequestProperty("Accept", "application/json")
             conn.setRequestProperty("Referer", "$DEFAULT_BASE_URL/")
+            conn.setRequestProperty("Cookie", "mature=1; sh_mature=1; birthdate=1990-01-01; adult=1")
             conn.connectTimeout = 8000
             conn.readTimeout = 10000
 
@@ -363,6 +371,7 @@ object ScribbleHubClient {
             conn.setRequestProperty("User-Agent", USER_AGENT)
             conn.setRequestProperty("Accept", "application/json")
             conn.setRequestProperty("Referer", "$DEFAULT_BASE_URL/")
+            conn.setRequestProperty("Cookie", "mature=1; sh_mature=1; birthdate=1990-01-01; adult=1")
             conn.connectTimeout = 8000
             conn.readTimeout = 10000
 
@@ -391,6 +400,7 @@ object ScribbleHubClient {
             conn.setRequestProperty("User-Agent", USER_AGENT)
             conn.setRequestProperty("Accept", "application/json")
             conn.setRequestProperty("Referer", "$DEFAULT_BASE_URL/")
+            conn.setRequestProperty("Cookie", "mature=1; sh_mature=1; birthdate=1990-01-01; adult=1")
             conn.connectTimeout = 8000
             conn.readTimeout = 10000
 
@@ -573,7 +583,7 @@ object ScribbleHubClient {
         } catch (_: Exception) {
             return null
         }
-        val data = root.optJSONObject("data") ?: return null
+        val data = root.optJSONObject("data") ?: root
 
         val title = ParserUtils.cleanText(data.optString("title"))
         if (title.isBlank()) return null
@@ -654,21 +664,33 @@ object ScribbleHubClient {
     private fun parseMetadataFromHtml(html: String, seriesId: Long, webUrl: String): ParsedWorkMetadata? {
         val titleMatch = Regex("""<div[^>]*class="fic_title"[^>]*>(.*?)</div>""", RegexOption.IGNORE_CASE).find(html)
             ?: Regex("""<h1[^>]*class="fic_title"[^>]*>(.*?)</h1>""", RegexOption.IGNORE_CASE).find(html)
-        val rawTitle = titleMatch?.groupValues?.get(1)?.replace(Regex("""<[^>]*>"""), "")
+            ?: Regex("""<meta[^>]*property="og:title"[^>]*content="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)
+            ?: Regex("""<title>(.*?)</title>""", RegexOption.IGNORE_CASE).find(html)
+
+        val rawTitle = titleMatch?.groupValues?.get(1)
+            ?.replace(Regex("""<[^>]*>"""), "")
+            ?.replace(Regex("""\s*\|\s*Scribble\s*Hub.*$""", RegexOption.IGNORE_CASE), "")
         val title = ParserUtils.cleanText(rawTitle)
         if (title.isBlank()) return null
 
         val descMatch = Regex("""<div[^>]*class="wi_fic_desc"[^>]*>(.*?)</div>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)
+            ?: Regex("""<meta[^>]*property="og:description"[^>]*content="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)
+            ?: Regex("""<meta[^>]*name="description"[^>]*content="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)
         val desc = descMatch?.groupValues?.get(1)?.let { ParserUtils.cleanDescription(it) }.orEmpty()
 
         val coverMatch = Regex("""<div[^>]*class="fic_image"[^>]*>.*?<img[^>]*src="([^"]+)"""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)
+            ?: Regex("""<meta[^>]*property="og:image"[^>]*content="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)
+            ?: Regex("""<link[^>]*rel="image_src"[^>]*href="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)
         val rawCover = coverMatch?.groupValues?.get(1)?.takeIf { !it.contains("noimage", ignoreCase = true) }
         val cover = rawCover?.let { ParserUtils.upgradeCoverUrl(it) }
 
         val authorMatch = Regex("""<span[^>]*class="auth_name_fic"[^>]*>(.*?)</span>""", RegexOption.IGNORE_CASE).find(html)
+            ?: Regex("""<meta[^>]*name="author"[^>]*content="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)
+            ?: Regex("""<meta[^>]*property="books:author"[^>]*content="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)
+            ?: Regex("""<a[^>]*href="[^"]*/profile/\d+/[^"]*"[^>]*>(.*?)</a>""", RegexOption.IGNORE_CASE).find(html)
         val author = authorMatch?.groupValues?.get(1)?.replace(Regex("""<[^>]*>"""), "")?.let { ParserUtils.sanitizeAuthor(it) }
 
-        val chMatch = Regex("""(\d+)\s*Chapters""", RegexOption.IGNORE_CASE).find(html)
+        val chMatch = Regex("""(\d+)\s*(?:Chapters|ch\b)""", RegexOption.IGNORE_CASE).find(html)
         val chapters = chMatch?.groupValues?.get(1)?.toDoubleOrNull()
 
         val genres = mutableListOf<String>()
@@ -776,9 +798,29 @@ object ScribbleHubClient {
         // 1. Исходный запрос
         addCandidate(trimmed)
 
+        // Нормализация «умной» типографики и кавычек (особенно актуально для Android клавиатур)
+        val normQuotes = trimmed
+            .replace('’', '\'')
+            .replace('‘', '\'')
+            .replace('“', '"')
+            .replace('”', '"')
+            .replace('«', '"')
+            .replace('»', '"')
+            .replace('–', '-')
+            .replace('—', '-')
+        if (normQuotes != trimmed) {
+            addCandidate(normQuotes)
+        }
+
+        // Вариант без апострофов и кавычек (например: "Omniscient Reader's Viewpoint" -> "Omniscient Reader Viewpoint")
+        val noApostrophes = normQuotes.replace("'", " ").replace("\"", " ").replace(Regex("""\s+"""), " ").trim()
+        if (noApostrophes != normQuotes && noApostrophes.isNotBlank()) {
+            addCandidate(noApostrophes)
+        }
+
         // Вариант без знаков препинания и точек/запятых (например: "Heaven, Earth, Me" -> "Heaven Earth Me", "Cosmos." -> "Cosmos")
-        val cleanPunctuation = trimmed.replace(Regex("""[.,!?;:]"""), " ").replace(Regex("""\s+"""), " ").trim()
-        if (cleanPunctuation.isNotBlank() && cleanPunctuation != trimmed) {
+        val cleanPunctuation = noApostrophes.replace(Regex("""[.,!?;:]"""), " ").replace(Regex("""\s+"""), " ").trim()
+        if (cleanPunctuation.isNotBlank() && cleanPunctuation != trimmed && cleanPunctuation != noApostrophes) {
             addCandidate(cleanPunctuation)
         }
 
@@ -796,7 +838,7 @@ object ScribbleHubClient {
         }
 
         // Базовый рабочий запрос (на английском)
-        val baseQuery = if (hasCyrillic && results.size > 1) results[1] else trimmed
+        val baseQuery = if (hasCyrillic && results.size > 1) results[1] else cleanPunctuation
 
         // 3. Разбиение по основным структурным разделителям: ':', '-', '–', '—', '(', '[', '|', '/'
         // Пример: "One Piece : Kingdom Building System" -> ["Kingdom Building System", "One Piece"]
@@ -806,6 +848,24 @@ object ScribbleHubClient {
         // Приоритет отдаем более длинным сегментам
         majorSegments.sortedByDescending { it.length }.forEach { segment ->
             addCandidate(segment)
+        }
+
+        // 4. Фильтрация стоп-слов (например "Lord of the Mysteries" -> "Lord Mysteries")
+        val stopWords = setOf("the", "a", "an", "of", "in", "and", "is", "at", "by", "for", "to", "on", "with", "as", "into", "that", "from")
+        val wordsWithoutStops = cleanPunctuation.split(Regex("""\s+"""))
+            .filter { it.lowercase(Locale.ROOT) !in stopWords && it.length >= 2 }
+        if (wordsWithoutStops.size >= 2 && wordsWithoutStops.size < cleanPunctuation.split(Regex("""\s+""")).size) {
+            addCandidate(wordsWithoutStops.joinToString(" "))
+        }
+
+        // 5. Комбинации слов для длинных запросов (помогает при частичном совпадении)
+        val words = (if (wordsWithoutStops.isNotEmpty()) wordsWithoutStops else cleanPunctuation.split(Regex("""\s+"""))).filter { it.length >= 3 }
+        if (words.size >= 3) {
+            addCandidate(words.take(3).joinToString(" "))
+            addCandidate(words.take(2).joinToString(" "))
+        } else if (words.size == 2) {
+            addCandidate(words[0])
+            addCandidate(words[1])
         }
 
         return results

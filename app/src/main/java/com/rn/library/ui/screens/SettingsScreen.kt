@@ -3,6 +3,13 @@ package com.rn.library.ui.screens
 import android.content.res.Configuration
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -122,6 +130,7 @@ fun SettingsScreen(
     onTvSeriesTabEnabledChange: (Boolean) -> Unit,
     isGridView: Boolean = false,
     onGridViewChange: (Boolean) -> Unit = {},
+    onOpenGenreTagScreen: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -153,20 +162,24 @@ fun SettingsScreen(
     var availableRelease by remember { mutableStateOf<com.rn.library.update.GitHubRelease?>(null) }
     var activeSettingsColorPicker by remember { mutableStateOf<SettingsColorTarget?>(null) }
     val scrollState = rememberScrollState()
+
     BackHandler(onBack = onBack)
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(mainBackgroundColor)
     ) {
-        IconButton(onClick = onBack) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = stringResource(R.string.cancel),
-                tint = iconTextColor
-            )
-        }
+        Column(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = stringResource(R.string.cancel),
+                    tint = iconTextColor
+                )
+            }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -203,6 +216,22 @@ fun SettingsScreen(
             ) {
                 Text(
                     text = stringResource(R.string.optimize_covers),
+                    color = settingsCardTextColor,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenGenreTagScreen() },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = settingsSectionCardColor)
+            ) {
+                Text(
+                    text = stringResource(R.string.genres_and_tags_settings),
                     color = settingsCardTextColor,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -568,6 +597,7 @@ fun SettingsScreen(
                 }
             }
 
+
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -618,6 +648,8 @@ fun SettingsScreen(
             val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
             Spacer(modifier = Modifier.height(if (isLandscape) 16.dp else bottomNavigationClearance()))
         }
+    }
+
 
         availableRelease?.let { release ->
             AlertDialog(

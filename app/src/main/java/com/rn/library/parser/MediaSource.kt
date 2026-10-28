@@ -58,6 +58,12 @@ enum class MediaSource(
 
     fun hasCategory(cat: SourceCategory): Boolean = categories.contains(cat)
 
+    val warningRes: Int? get() = when (this) {
+        RANOBES -> R.string.source_warning_ranobes
+        SCRIBBLEHUB -> R.string.source_warning_scribblehub
+        else -> null
+    }
+
     companion object {
         fun fromId(id: String): MediaSource {
             return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: SHIKIMORI

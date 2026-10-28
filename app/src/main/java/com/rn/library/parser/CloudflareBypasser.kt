@@ -41,21 +41,58 @@ object CloudflareBypasser {
 
     fun isCloudflareChallenge(html: String): Boolean {
         val lower = html.lowercase()
-        return lower.contains("<title>just a moment...</title>") ||
+
+        // 1. Явные маркеры страниц-проверок
+        val isChallengeTitle = lower.contains("<title>just a moment...</title>") ||
                 lower.contains("<title>attention required! | cloudflare</title>") ||
+                lower.contains("<title>ddos-guard</title>") ||
+                lower.contains("<title>security check</title>")
+
+        val hasCaptchaWidget = lower.contains("vb-custom-captcha") ||
+                lower.contains("vb_custom_captcha") ||
                 lower.contains("id=\"challenge-stage\"") ||
                 lower.contains("id=\"challenge-running\"") ||
                 lower.contains("id=\"cf-challenge-running\"") ||
-                lower.contains("id=\"challenge-form\"") ||
                 lower.contains("class=\"cf-browser-verification\"") ||
-                lower.contains("browser_check=") ||
-                lower.contains("ddos-guard") ||
-                lower.contains("security check") ||
-                lower.contains("enable javascript and cookies to continue") ||
+                lower.contains("class=\"cf-turnstile\"") ||
+                lower.contains("id=\"cf-turnstile\"")
+
+        if (isChallengeTitle || hasCaptchaWidget) {
+            return true
+        }
+
+        // 2. Реальный контент сайта (если найден, страница успешно загрузилась)
+        val hasRealContent = lower.contains("<article") ||
+                lower.contains("class=\"moreless__full\"") ||
+                lower.contains("class=\"r-fullstory\"") ||
+                lower.contains("dle-content") ||
+                lower.contains("class=\"b-story\"") ||
+                lower.contains("class=\"fic_title\"") ||
+                lower.contains("class=\"wi_fic_desc\"") ||
+                lower.contains("<nav") ||
+                lower.contains("<header") ||
+                lower.contains("<footer") ||
+                lower.contains("class=\"short-story\"") ||
+                lower.contains("class=\"search-page\"") ||
+                lower.contains("class=\"title\"")
+
+        if (hasRealContent && html.length > 2500) {
+            return false
+        }
+
+        // 3. Короткие страницы редиректов защиты
+        return lower.contains("enable javascript and cookies to continue") ||
+                (lower.contains("browser_check=") && html.length < 3000) ||
+                (lower.contains("check.ddos-guard.net") && html.length < 3000) ||
                 (lower.contains("id=\"cf-wrapper\"") && lower.contains("ray id:"))
     }
 
-    private fun fetchDirect(urlStr: String, referer: String?, retryCount: Int = 1): String? {
+    private fun fetchDirect(
+        urlStr: String,
+        referer: String?,
+        retryCount: Int = 1,
+        retryCookie: String? = null
+    ): String? {
         return try {
             val url = URL(urlStr)
             val conn = url.openConnection() as HttpURLConnection
@@ -81,13 +118,13 @@ object CloudflareBypasser {
             val extraCookies = if (urlStr.contains("scribblehub.com", ignoreCase = true)) {
                 "mature=1; sh_mature=1; birthdate=1990-01-01"
             } else ""
-            val fullCookie = listOf(storedCookies, extraCookies).filter { it.isNotBlank() }.joinToString("; ")
+            val fullCookie = listOf(storedCookies, extraCookies, retryCookie).filter { !it.isNullOrBlank() }.joinToString("; ")
             if (fullCookie.isNotBlank()) {
                 conn.setRequestProperty("Cookie", fullCookie)
             }
 
-            conn.connectTimeout = 8000
-            conn.readTimeout = 10000
+            conn.connectTimeout = 5000
+            conn.readTimeout = 7000
 
             // Save set cookies from headers regardless of responseCode
             val setCookies = conn.headerFields["Set-Cookie"]
@@ -109,13 +146,19 @@ object CloudflareBypasser {
 
             if (rawText != null) {
                 // Check for Ranobes / DDoS check browser_check cookie token
-                val browserCheckMatch = Regex("""browser_check\s*=\s*['"]?([a-zA-Z0-9_\-:]+)""").find(rawText)
-                if (browserCheckMatch != null && cookieManager != null && retryCount > 0) {
+                val browserCheckMatch = Regex("""browser_check\s*=\s*['"]?([^'"\s;]+)""").find(rawText)
+                if (browserCheckMatch != null && retryCount > 0) {
                     val token = browserCheckMatch.groupValues[1]
-                    cookieManager.setCookie(urlStr, "browser_check=$token; path=/")
-                    cookieManager.flush()
+                    val cookieStr = "browser_check=$token; path=/"
+                    cookieManager?.setCookie(urlStr, cookieStr)
+                    val host = try { URL(urlStr).host } catch (_: Exception) { "" }
+                    if (host.isNotBlank()) {
+                        cookieManager?.setCookie(host, cookieStr)
+                        cookieManager?.setCookie(".$host", cookieStr)
+                    }
+                    cookieManager?.flush()
                     conn.disconnect()
-                    return fetchDirect(urlStr, referer, retryCount - 1)
+                    return fetchDirect(urlStr, referer, retryCount - 1, retryCookie = "browser_check=$token")
                 }
 
                 if (code in 200..299 && !isCloudflareChallenge(rawText)) {
@@ -144,25 +187,18 @@ object CloudflareBypasser {
                     return@suspendCancellableCoroutine
                 }
 
-                val decorView = activity?.window?.decorView as? ViewGroup
-                var attached = false
-                try {
-                    if (decorView != null) {
-                        webView.alpha = 0.01f
-                        decorView.addView(webView, ViewGroup.LayoutParams(1080, 1920))
-                        attached = true
-                    }
-                } catch (_: Exception) {}
+                var verificationDialog: android.app.Dialog? = null
 
                 fun finish(result: String?) {
                     if (!isFinished) {
                         isFinished = true
                         handler.removeCallbacksAndMessages(null)
                         try {
-                            if (attached && decorView != null) {
-                                decorView.removeView(webView)
+                            if (verificationDialog?.isShowing == true) {
+                                verificationDialog?.dismiss()
                             }
                             webView.stopLoading()
+                            (webView.parent as? ViewGroup)?.removeView(webView)
                             webView.destroy()
                         } catch (_: Exception) {}
                         continuation.resume(result)
@@ -185,6 +221,60 @@ object CloudflareBypasser {
                 }
                 handler.postDelayed(timeoutRunnable, timeoutMs)
 
+                // Если через 2.5 сек защита требует ввода капчи — показываем диалог поверх экрана
+                val showIfChallengeRunnable = Runnable {
+                    if (!isFinished && activity != null && !activity.isFinishing && !activity.isDestroyed) {
+                        try {
+                            webView.evaluateJavascript("document.documentElement.outerHTML") { htmlRaw ->
+                                val html = parseJsString(htmlRaw)
+                                if (isCloudflareChallenge(html) && !isFinished) {
+                                    val container = android.widget.LinearLayout(activity).apply {
+                                        orientation = android.widget.LinearLayout.VERTICAL
+                                        setBackgroundColor(android.graphics.Color.WHITE)
+                                    }
+                                    val header = android.widget.LinearLayout(activity).apply {
+                                        orientation = android.widget.LinearLayout.HORIZONTAL
+                                        setPadding(32, 24, 32, 24)
+                                        setBackgroundColor(android.graphics.Color.parseColor("#1E1E2E"))
+                                        gravity = android.view.Gravity.CENTER_VERTICAL
+                                    }
+                                    val titleText = android.widget.TextView(activity).apply {
+                                        text = "Проверка защиты (капча)"
+                                        setTextColor(android.graphics.Color.WHITE)
+                                        textSize = 15f
+                                        layoutParams = android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
+                                    }
+                                    val closeBtn = android.widget.Button(activity).apply {
+                                        text = "Закрыть"
+                                        setOnClickListener { finish(null) }
+                                    }
+                                    header.addView(titleText)
+                                    header.addView(closeBtn)
+                                    container.addView(header)
+
+                                    (webView.parent as? ViewGroup)?.removeView(webView)
+                                    webView.alpha = 1.0f
+                                    val webParams = android.widget.LinearLayout.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        0,
+                                        1.0f
+                                    )
+                                    container.addView(webView, webParams)
+
+                                    val dialog = android.app.Dialog(activity, android.R.style.Theme_DeviceDefault_Light_NoActionBar_Fullscreen).apply {
+                                        setContentView(container)
+                                        setCancelable(true)
+                                        setOnCancelListener { finish(null) }
+                                    }
+                                    verificationDialog = dialog
+                                    dialog.show()
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+                handler.postDelayed(showIfChallengeRunnable, 2500)
+
                 try {
                     val cookieManager = CookieManager.getInstance()
                     cookieManager.setAcceptCookie(true)
@@ -193,6 +283,12 @@ object CloudflareBypasser {
                         cookieManager.setCookie("https://www.scribblehub.com", "mature=1; path=/; domain=.scribblehub.com")
                         cookieManager.setCookie("https://www.scribblehub.com", "sh_mature=1; path=/; domain=.scribblehub.com")
                         cookieManager.setCookie("https://www.scribblehub.com", "birthdate=1990-01-01; path=/; domain=.scribblehub.com")
+                        cookieManager.setCookie("https://www.scribblehub.com", "adult=1; path=/; domain=.scribblehub.com")
+                        cookieManager.flush()
+                    }
+                    if (urlStr.contains("ranobes", ignoreCase = true)) {
+                        cookieManager.setCookie("https://ranobes.top", "user_country=RU; path=/; domain=.ranobes.top")
+                        cookieManager.setCookie("https://ranobes.net", "user_country=RU; path=/; domain=.ranobes.net")
                         cookieManager.flush()
                     }
 
@@ -212,7 +308,7 @@ object CloudflareBypasser {
                             if (isFinished) return
                             try {
                                 val cookies = cookieManager.getCookie(urlStr).orEmpty()
-                                if (cookies.contains("cf_clearance")) {
+                                if (cookies.contains("cf_clearance") || cookies.contains("browser_check")) {
                                     cookieManager.flush()
                                 }
 
@@ -220,16 +316,14 @@ object CloudflareBypasser {
                                     val title = parseJsString(titleRaw).lowercase()
                                     val isChallengeTitle = title.contains("just a moment") ||
                                             title.contains("attention required") ||
-                                            (title.contains("cloudflare") && !title.contains("novel"))
+                                            (title.contains("cloudflare") && !title.contains("novel")) ||
+                                            title.contains("security check")
 
-                                    if (!isChallengeTitle && title.isNotBlank()) {
-                                        webView.evaluateJavascript("document.documentElement.outerHTML") { htmlRaw ->
-                                            val html = parseJsString(htmlRaw)
-                                            if (html.length > 500 && !isCloudflareChallenge(html)) {
-                                                cookieManager.flush()
-                                                finish(html)
-                                                return@evaluateJavascript
-                                            }
+                                    webView.evaluateJavascript("document.documentElement.outerHTML") { htmlRaw ->
+                                        val html = parseJsString(htmlRaw)
+                                        if (html.length > 500 && !isChallengeTitle && !isCloudflareChallenge(html)) {
+                                            cookieManager.flush()
+                                            finish(html)
                                         }
                                     }
                                 }

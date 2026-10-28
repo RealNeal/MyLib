@@ -44,9 +44,9 @@ object AniLibertyClient {
             if (trimmed.isBlank()) return@withContext Result.success(emptyList())
 
             val encoded = URLEncoder.encode(trimmed, "UTF-8")
-            val urlString = "$BASE_API_URL/anime/catalog/releases?search=$encoded&limit=20"
+            val urlString = "$BASE_API_URL/anime/catalog/releases?f[search]=$encoded&limit=20"
 
-            val json = fetchJson(urlString) ?: fetchJson("$MIRROR_API_URL/anime/catalog/releases?search=$encoded&limit=20")
+            val json = fetchJson(urlString) ?: fetchJson("$MIRROR_API_URL/anime/catalog/releases?f[search]=$encoded&limit=20")
             if (json == null) {
                 return@withContext Result.failure(Exception("Не удалось получить ответ от AniLiberty"))
             }

@@ -93,7 +93,13 @@ class WorkRepository(val context: Context) {
                     while (redirects < 5) {
                         val connection = URL(currentUrl).openConnection() as HttpURLConnection
                         val referer = when {
-                            currentUrl.contains("cdnlibs.org") || currentUrl.contains("mangalib") -> "https://mangalib.me/"
+                            currentUrl.contains("imglib") || currentUrl.contains("cdnlibs") || currentUrl.contains("lib.social") || currentUrl.contains("mangalib") -> {
+                                when {
+                                    currentUrl.contains("ranobelib") || currentUrl.contains("ranobe") -> "https://ranobelib.me/"
+                                    currentUrl.contains("animelib") || currentUrl.contains("anime") -> "https://animelib.me/"
+                                    else -> "https://mangalib.me/"
+                                }
+                            }
                             currentUrl.contains("ranobelib") -> "https://ranobelib.me/"
                             currentUrl.contains("animelib") -> "https://animelib.me/"
                             currentUrl.contains("anixmirai") || currentUrl.contains("anixart") -> "https://anixart.tv/"

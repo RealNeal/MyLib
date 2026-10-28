@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Palette
@@ -739,6 +740,7 @@ fun TopOptionsMenu(
     isGridView: Boolean,
     onViewModeSelected: (Boolean) -> Unit,
     onOpenColorSettings: () -> Unit,
+    onOpenGenreTags: () -> Unit = {},
     activeColor: Color = MaterialTheme.colorScheme.primary
 ) {
     val context = LocalContext.current
@@ -1087,6 +1089,42 @@ fun TopOptionsMenu(
                             border = AssistChipDefaults.assistChipBorder(
                                 borderColor = if (showSearchSourcesSubmenu) activeColor else activeColor.copy(alpha = 0.5f),
                                 borderWidth = if (showSearchSourcesSubmenu) 2.dp else 1.dp,
+                                enabled = true
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        // 4. Жанры и теги
+                        AssistChip(
+                            onClick = {
+                                showViewModeSubmenu = false
+                                showSearchSourcesSubmenu = false
+                                onDismissRequest()
+                                onOpenGenreTags()
+                            },
+                            label = {
+                                Text(
+                                    text = stringResource(R.string.genres_and_tags_settings),
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Bookmarks,
+                                    contentDescription = null,
+                                    tint = activeColor
+                                )
+                            },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = Color.Transparent,
+                                labelColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            border = AssistChipDefaults.assistChipBorder(
+                                borderColor = activeColor.copy(alpha = 0.5f),
+                                borderWidth = 1.dp,
                                 enabled = true
                             ),
                             modifier = Modifier.fillMaxWidth()

@@ -29,12 +29,11 @@ object RanobesClient {
                 ?: return@withContext Result.failure(Exception("Пустой ответ от Ranobes"))
 
             val list = mutableListOf<ShikimoriSearchResult>()
-            // Find articles or shortstory blocks
             val itemRegex = Regex(
-                """<h2 class="title"><a href="([^"]*(?:novels|ranobe)/(\d+)-([^"]*)\.html)">([^<]+)</a></h2>""",
+                """<h[1-4]\b[^>]*class=["'][^"']*title[^"']*["'][^>]*>\s*<a\b[^>]*href=["']([^"']*(?:novels|ranobe)/(\d+)-([^"']*?)\.html)["'][^>]*>([\s\S]*?)</a>""",
                 RegexOption.IGNORE_CASE
             )
-            val coverRegex = Regex("""background-image:\s*url\(([^)]+)\);""")
+            val coverRegex = Regex("""background-image:\s*url\(['"]?([^'"\)]+)['"]?\)""")
 
             // Split by articles
             val articleBlocks = html.split("<article")
@@ -120,7 +119,9 @@ object RanobesClient {
             val html = fetchHtml(targetUrl)
                 ?: return@withContext Result.failure(Exception("Не удалось загрузить новеллу с Ranobes"))
 
-            val ogTitle = Regex("""<meta property="og:title" content="([^"]+)"""").find(html)?.groupValues?.get(1)
+            val ogTitle = Regex("""<meta\s+property="og:title"\s+content="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1)
+                ?: Regex("""<h1\b[^>]*class=["'][^"']*title[^"']*["'][^>]*>([\s\S]*?)</h1>""", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1)
+                ?: Regex("""<h1\b[^>]*>([\s\S]*?)</h1>""", RegexOption.IGNORE_CASE).find(html)?.groupValues?.get(1)
             val title = ParserUtils.cleanText(ogTitle ?: "Ranobes Novel")
 
             val altTitles = mutableListOf<String>()
@@ -219,7 +220,7 @@ object RanobesClient {
         val mirrors = ParserDomainManager.getMirrors(ParserDomainManager.SOURCE_RANOBES)
         for (mirror in mirrors) {
             val fullUrl = if (cleanPath.startsWith("http")) cleanPath else "$mirror$cleanPath"
-            val html = CloudflareBypasser.fetchHtmlWithFallback(fullUrl, referer = "$mirror/")
+            val html = CloudflareBypasser.fetchHtmlWithFallback(fullUrl, referer = "$mirror/", timeoutMs = 8000L)
             if (html != null) {
                 if (!cleanPath.startsWith("http")) {
                     ParserDomainManager.reportWorking(ParserDomainManager.SOURCE_RANOBES, mirror)

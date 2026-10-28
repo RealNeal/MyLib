@@ -30,7 +30,7 @@ object MangaBuffClient {
     suspend fun search(query: String): Result<List<ShikimoriSearchResult>> = withContext(Dispatchers.IO) {
         try {
             val encoded = URLEncoder.encode(query.trim(), "UTF-8")
-            val url = "${getBaseUrl()}/manga?search=$encoded"
+            val url = "${getBaseUrl()}/search?q=$encoded"
             val html = fetchHtml(url) ?: return@withContext Result.failure(Exception("Пустой ответ от MangaBuff"))
 
             val list = mutableListOf<ShikimoriSearchResult>()

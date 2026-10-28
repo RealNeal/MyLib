@@ -1,5 +1,6 @@
 package com.rn.library.parser
 
+import com.rn.library.data.GenreTagManager
 import com.rn.library.ui.Language
 
 object GenreTagTranslator {
@@ -767,6 +768,7 @@ object GenreTagTranslator {
     }
 
     private fun findRussianSynonym(key: String): String? {
+        GenreTagManager.getCustomSynonym(key)?.let { return it }
         RU_SYNONYMS[key]?.let { return it }
 
         if (key.endsWith("ия") && key.length > 3) {
@@ -793,6 +795,9 @@ object GenreTagTranslator {
         if (cleaned.isBlank() || cleaned.equals("null", ignoreCase = true)) return ""
         val lowerKey = normalizeKey(cleaned)
 
+        // 0. User custom synonyms / merged tags
+        GenreTagManager.getCustomSynonym(lowerKey)?.let { return it }
+
         // Acronyms & proper terms like SCP, RPG, VR, VRMMO, etc.
         if (ACRONYMS.contains(lowerKey) || lowerKey.startsWith("scp ") || lowerKey.startsWith("scp-")) {
             return cleaned.uppercase()
@@ -802,6 +807,7 @@ object GenreTagTranslator {
             // 1. Check English -> Russian dictionary
             findEnglishToRussian(lowerKey)?.let { ruVal ->
                 val normRu = normalizeKey(ruVal)
+                GenreTagManager.getCustomSynonym(normRu)?.let { return it }
                 return findRussianSynonym(normRu) ?: ruVal
             }
 

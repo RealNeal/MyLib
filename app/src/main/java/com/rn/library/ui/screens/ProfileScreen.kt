@@ -148,6 +148,7 @@ fun ProfileScreen(
     isGridView: Boolean = false,
     onGridViewChange: (Boolean) -> Unit = {},
     works: List<Work> = emptyList(),
+    onOpenGenreTagScreen: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val mainBackgroundColor = MainBackgroundColor()
@@ -500,6 +501,7 @@ fun ProfileScreen(
                 onTvSeriesTabEnabledChange = onTvSeriesTabEnabledChange,
                 isGridView = isGridView,
                 onGridViewChange = onGridViewChange,
+                onOpenGenreTagScreen = onOpenGenreTagScreen,
                 modifier = Modifier.fillMaxSize()
             )
         }

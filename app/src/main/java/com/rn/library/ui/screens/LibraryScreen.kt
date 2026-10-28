@@ -87,6 +87,7 @@ import com.rn.library.ui.components.BottomNavigationBar
 import com.rn.library.ui.components.bottomNavigationClearance
 import com.rn.library.ui.components.tabContentColor
 import com.rn.library.ui.components.tabBackgroundColor
+import com.rn.library.ui.components.GenreTagSettingsScreen
 import com.rn.library.ui.components.NavigationItem
 import com.rn.library.ui.components.SearchBar
 import com.rn.library.ui.components.SunIcon
@@ -513,6 +514,7 @@ fun LibraryScreen(
     var isTagOrGenreQuery by remember { mutableStateOf(false) }
     var statusFilter by remember { mutableStateOf<WorkStatus?>(null) }
     var showAddWorkScreen by remember { mutableStateOf<Boolean>(false) }
+    var showGenreTagScreen by remember { mutableStateOf(false) }
     var showTopMenu by remember { mutableStateOf(false) }
     var showColorSettingsDialog by remember { mutableStateOf(false) }
     var works by remember { mutableStateOf<List<Work>>(emptyList()) }
@@ -525,14 +527,14 @@ fun LibraryScreen(
             "Спорт", "Сёнэн", "Сэйнэн", "Сёдзё", "Триллер", "Ужасы",
             "Фантастика", "Фэнтези", "Школа", "Экшен"
         )
-        (works.flatMap { it.genres } + predefined)
+        (works.flatMap { it.genres } + predefined + com.rn.library.data.GenreTagManager.getCustomGenres(context))
             .map { it.trim().lowercase() }
             .filter { it.isNotBlank() }
             .toSet()
     }
 
     val allKnownTags = remember(works) {
-        works.flatMap { it.tags }
+        (works.flatMap { it.tags } + com.rn.library.data.GenreTagManager.getCustomTags(context))
             .map { it.trim().lowercase().removePrefix("#") }
             .filter { it.isNotBlank() }
             .toSet()
@@ -595,9 +597,14 @@ fun LibraryScreen(
         expandedCoverWork = null
     }
 
-    // Общий back: закрываем экран добавления или просмотра произведения.
-    BackHandler(enabled = showAddWorkScreen || (selectedWork != null && expandedCoverWork == null)) {
+    // Общий back: закрываем экран жанров/тегов, добавления или просмотра произведения.
+    BackHandler(enabled = showGenreTagScreen || showAddWorkScreen || (selectedWork != null && expandedCoverWork == null)) {
         when {
+            showGenreTagScreen -> {
+                showGenreTagScreen = false
+                works = repository.getAllWorks()
+                selectedWork = selectedWork?.id?.let { repository.getWorkById(it) }
+            }
             showAddWorkScreen -> {
                 // Если редактировали существующее произведение, возвращаемся к экрану просмотра
                 if (editingWork != null) {
@@ -911,6 +918,10 @@ fun LibraryScreen(
                                                 showTopMenu = false
                                                 showColorSettingsDialog = true
                                             },
+                                            onOpenGenreTags = {
+                                                showTopMenu = false
+                                                showGenreTagScreen = true
+                                            },
                                             activeColor = tabColor
                                         )
                                     }
@@ -1170,6 +1181,7 @@ fun LibraryScreen(
                                                     isHeaderVisible = !shouldHide
                                                 },
                                                 works = works,
+                                                onOpenGenreTagScreen = { showGenreTagScreen = true },
                                                 modifier = Modifier.fillMaxSize()
                                             )
                                         }
@@ -1440,6 +1452,49 @@ fun LibraryScreen(
                                     }
                                 },
                                 work = editingWork
+                            )
+                        }
+                    }
+
+                    // Genre & Tag Settings Screen — полноэкранный слой поверх главного контейнера и нижней панели вкладок (как меню Добавить произведение)
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showGenreTagScreen,
+                        enter = fadeIn(
+                            animationSpec = tween(
+                                200,
+                                easing = FastOutSlowInEasing
+                            )
+                        ) + slideInVertically(
+                            initialOffsetY = { it / 3 },
+                            animationSpec = tween(220, easing = FastOutSlowInEasing)
+                        ),
+                        exit = fadeOut(
+                            animationSpec = tween(
+                                180,
+                                easing = FastOutSlowInEasing
+                            )
+                        ) + slideOutVertically(
+                            targetOffsetY = { it / 3 },
+                            animationSpec = tween(200, easing = FastOutSlowInEasing)
+                        ),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(mainBackgroundColor)
+                        ) {
+                            GenreTagSettingsScreen(
+                                onBack = {
+                                    showGenreTagScreen = false
+                                    works = repository.getAllWorks()
+                                    selectedWork = selectedWork?.id?.let { repository.getWorkById(it) }
+                                },
+                                onWorksUpdated = {
+                                    works = repository.getAllWorks()
+                                    selectedWork = selectedWork?.id?.let { repository.getWorkById(it) }
+                                },
+                                repository = repository
                             )
                         }
                     }

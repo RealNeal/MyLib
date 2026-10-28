@@ -29,8 +29,8 @@ object ParserDomainManager {
 
     private val DEFAULT_MIRRORS = mapOf(
         SOURCE_LIB_SOCIAL_API to listOf(
-            "https://api.lib.social/api",
-            "https://api.cdnlibs.org/api"
+            "https://api.cdnlibs.org/api",
+            "https://api.lib.social/api"
         ),
         SOURCE_ANIMELIB_WEB to listOf(
             "https://animelib.me",
@@ -49,10 +49,8 @@ object ParserDomainManager {
             "https://ranobe.lib.social"
         ),
         SOURCE_RANOBES to listOf(
-            "https://ranobes.top",
             "https://ranobes.net",
-            "https://ranobes.org",
-            "https://ranobes.com"
+            "https://ranobes.top"
         ),
         SOURCE_RULATE to listOf(
             "https://tl.rulate.ru",

@@ -74,10 +74,11 @@ class WorkRepository(val context: Context) {
     suspend fun downloadCoverToStorage(imageUrl: String, workId: String, index: Int): String? =
         withContext(Dispatchers.IO) {
             try {
-                val baseDir = context.getExternalFilesDir(null) ?: context.filesDir
+                val baseDir = context.filesDir
                 val coversDir = File(baseDir, "covers").apply { mkdirs() }
-                val outputFile = File(coversDir, "${workId}_$index.jpg")
+                val outputFile = InputLimits.destination(coversDir, workId, "_${index.coerceAtLeast(0)}.jpg")
 
+                require(InputLimits.webUrl(imageUrl))
                 val upgradedUrl = ParserUtils.upgradeCoverUrl(imageUrl)
                 val urlsToTry = if (!upgradedUrl.isNullOrBlank() && upgradedUrl != imageUrl) {
                     listOf(upgradedUrl, imageUrl)
@@ -91,6 +92,7 @@ class WorkRepository(val context: Context) {
                     var downloaded = false
 
                     while (redirects < 5) {
+                        require(InputLimits.webUrl(currentUrl))
                         val connection = URL(currentUrl).openConnection() as HttpURLConnection
                         val referer = when {
                             currentUrl.contains("imglib") || currentUrl.contains("cdnlibs") || currentUrl.contains("lib.social") || currentUrl.contains("mangalib") -> {
@@ -122,7 +124,7 @@ class WorkRepository(val context: Context) {
                         connection.setRequestProperty("Accept", "image/webp,image/apng,image/*,*/*;q=0.8")
                         connection.connectTimeout = 12000
                         connection.readTimeout = 20000
-                        connection.instanceFollowRedirects = true
+                        connection.instanceFollowRedirects = false
                         val code = connection.responseCode
                         if (code in 300..399) {
                             val newLoc = connection.getHeaderField("Location") ?: break
@@ -133,7 +135,7 @@ class WorkRepository(val context: Context) {
                         if (code in 200..299) {
                             connection.inputStream.use { input ->
                                 FileOutputStream(outputFile).use { output ->
-                                    input.copyTo(output)
+                                    InputLimits.copy(input, output, InputLimits.MAX_BOOK)
                                 }
                             }
                             downloaded = true
@@ -144,8 +146,8 @@ class WorkRepository(val context: Context) {
                     }
 
                     if (downloaded && outputFile.exists() && outputFile.length() > 0) {
-                        optimizeCoverFile(outputFile)
-                        return@withContext outputFile.absolutePath
+                        if (optimizeCoverFile(outputFile)) return@withContext outputFile.absolutePath
+                        outputFile.delete()
                     }
                 }
                 null
@@ -163,9 +165,8 @@ class WorkRepository(val context: Context) {
         val orderedPaths = work.allCoverPaths()
         if (orderedPaths.isEmpty()) return work
 
-        val persistedPaths = orderedPaths.mapIndexed { index, path ->
-            persistSingleCoverPath(path, work.id, index)
-        }
+        val persistedPaths = orderedPaths.mapNotNull { path -> safeStoredCover(path) }
+        if (persistedPaths.isEmpty()) return work.copy(coverPath = null, coverPaths = emptyList())
 
         val primaryIndex = work.coverPath
             ?.let { orderedPaths.indexOf(it).takeIf { idx -> idx >= 0 } }
@@ -177,38 +178,26 @@ class WorkRepository(val context: Context) {
         return if (updated.coverPath == work.coverPath && updated.coverPaths == work.coverPaths) work else updated
     }
 
-    private fun persistSingleCoverPath(path: String, workId: String, index: Int): String {
-        if (path.startsWith("/")) {
-            val file = File(path)
-            if (file.exists() && file.isFile) return path
-        }
-        if (needsPersisting(path)) {
-            val uri = Uri.parse(path)
-            saveCoverToStorage(uri, workId, index)?.let { return it }
-        }
-        return path
-    }
-
-    private fun needsPersisting(path: String): Boolean {
-        if (path.startsWith("content://") || path.startsWith("file://")) return true
-        if (path.startsWith("/")) {
-            val file = File(path)
-            return !file.exists()
-        }
-        return true
+    private fun safeStoredCover(path: String): String? {
+        if (InputLimits.webUrl(path)) return path
+        if (!path.startsWith("/")) return null
+        val file = File(path).canonicalFile
+        val allowed = listOf(File(context.filesDir, "covers").canonicalFile,
+            File(context.getExternalFilesDir(null) ?: context.filesDir, "covers").canonicalFile)
+        return path.takeIf { file.isFile && file.parentFile in allowed }
     }
 
     private fun saveCoverToStorage(uri: Uri, workId: String, index: Int): String? {
         return try {
-            val baseDir = context.getExternalFilesDir(null) ?: context.filesDir
+            val baseDir = context.filesDir
             val coversDir = File(baseDir, "covers").apply { mkdirs() }
-            val outputFile = File(coversDir, "${workId}_$index.jpg")
+            val outputFile = InputLimits.destination(coversDir, workId, "_${index.coerceAtLeast(0)}.jpg")
             val compressed = compressImage(uri, context)
             if (compressed != null) {
                 FileOutputStream(outputFile).use { it.write(compressed) }
                 outputFile.absolutePath
             } else {
-                copyCoverFromDocument(context, uri, workId, index)
+                null
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -220,7 +209,7 @@ class WorkRepository(val context: Context) {
     fun loadActivityEvents(): List<ActivityDeltaEvent> = activityDeltaLog.loadEvents()
 
     fun getWorkById(workId: String): Work? {
-        val file = File(worksDirectory, "$workId.md")
+        val file = InputLimits.destination(worksDirectory, workId, ".md")
         return if (file.exists()) parseMarkdownFile(file) else null
     }
 
@@ -276,7 +265,7 @@ class WorkRepository(val context: Context) {
 
     fun importActivityStatisticsFromUri(context: Context, uri: Uri): Int {
         return try {
-            val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            val text = context.contentResolver.openInputStream(uri)?.use { InputLimits.text(it) }
                 ?: return 0
             importActivityStatisticsFromText(text)
         } catch (e: Exception) {
@@ -306,8 +295,7 @@ class WorkRepository(val context: Context) {
     ): Boolean {
         return try {
             val workWithPersistedCovers = persistWorkCovers(work)
-            val filename = "${workWithPersistedCovers.id}.md"
-            val file = File(worksDirectory, filename)
+            val file = InputLimits.destination(worksDirectory, workWithPersistedCovers.id, ".md")
             val previous = if (file.exists()) parseMarkdownFile(file) else null
             val now = System.currentTimeMillis()
             val workWithTimestamp = if (preserveUpdatedAt && workWithPersistedCovers.updatedAt != null) {
@@ -365,7 +353,7 @@ class WorkRepository(val context: Context) {
 
     fun deleteWork(workId: String): Boolean {
         return try {
-            val file = File(worksDirectory, "$workId.md")
+            val file = InputLimits.destination(worksDirectory, workId, ".md")
             file.delete()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -393,14 +381,14 @@ class WorkRepository(val context: Context) {
                 sb.appendLine("exportBase: ${escapeMarkdown(it)}")
             }
             if (exportHints.exportCoverNames.isNotEmpty()) {
-                sb.appendLine("exportCovers: ${encodeList(exportHints.exportCoverNames)}")
+                sb.appendLine("exportCovers: ${escapeMarkdown(encodeList(exportHints.exportCoverNames))}")
             }
         } else {
             work.coverPath?.let {
-                sb.appendLine("cover: $it")
+                sb.appendLine("cover: ${escapeMarkdown(it)}")
             }
             if (work.coverPaths.isNotEmpty()) {
-                sb.appendLine("covers: ${encodeList(work.coverPaths)}")
+                sb.appendLine("covers: ${escapeMarkdown(encodeList(work.coverPaths))}")
             }
         }
         work.chapters?.let {
@@ -419,16 +407,16 @@ class WorkRepository(val context: Context) {
             sb.appendLine("seasons: $it")
         }
         work.dateRead?.takeIf { it.isNotBlank() && it != "null" }?.let {
-            sb.appendLine("dateRead: $it")
+            sb.appendLine("dateRead: ${escapeMarkdown(it)}")
         }
         if (work.rereadDates.isNotEmpty()) {
-            sb.appendLine("rereadDates: ${encodeList(work.rereadDates)}")
+            sb.appendLine("rereadDates: ${escapeMarkdown(encodeList(work.rereadDates))}")
         }
         if (work.readingPeriods.isNotEmpty()) {
-            sb.appendLine("readingPeriods: ${encodePeriods(work.readingPeriods)}")
+            sb.appendLine("readingPeriods: ${escapeMarkdown(encodePeriods(work.readingPeriods))}")
         }
         if (work.unitProgress.isNotEmpty()) {
-            sb.appendLine("unitProgress: ${encodeUnitProgress(work.unitProgress)}")
+            sb.appendLine("unitProgress: ${escapeMarkdown(encodeUnitProgress(work.unitProgress))}")
         }
         work.activeUnitIndex?.let {
             sb.appendLine("activeUnitIndex: $it")
@@ -465,24 +453,24 @@ class WorkRepository(val context: Context) {
         }
         val allLinks = work.allLinks()
         if (allLinks.isNotEmpty()) {
-            sb.appendLine("links: ${encodeList(allLinks)}")
+            sb.appendLine("links: ${escapeMarkdown(encodeList(allLinks))}")
         }
         allLinks.getOrNull(0)?.let {
-            // Не применяем escapeMarkdown к ссылкам, чтобы избежать проблем с обратными слэшами
-            sb.appendLine("link: $it")
+            // JSON quoting prevents metadata injection through links.
+            sb.appendLine("link: ${escapeMarkdown(it)}")
         }
         allLinks.getOrNull(1)?.let {
             // Вторая ссылка хранится отдельно
-            sb.appendLine("link2: $it")
+            sb.appendLine("link2: ${escapeMarkdown(it)}")
         }
         work.author?.takeIf { it.isNotBlank() }?.let {
             sb.appendLine("author: ${escapeMarkdown(it)}")
         }
         if (work.genres.isNotEmpty()) {
-            sb.appendLine("genres: ${encodeList(work.genres)}")
+            sb.appendLine("genres: ${escapeMarkdown(encodeList(work.genres))}")
         }
         if (work.tags.isNotEmpty()) {
-            sb.appendLine("tags: ${encodeList(work.tags)}")
+            sb.appendLine("tags: ${escapeMarkdown(encodeList(work.tags))}")
         }
         work.updatedAt?.let {
             sb.appendLine("updatedAt: $it")
@@ -495,7 +483,7 @@ class WorkRepository(val context: Context) {
 
     private fun parseMarkdownFile(file: File): Work? {
         return try {
-            parseMarkdownContent(file.readText())
+            file.inputStream().use { InputLimits.text(it) }.let { parseMarkdownContent(it) }?.takeIf { it.id == file.nameWithoutExtension }
         } catch (e: Exception) {
             e.printStackTrace()
             null
@@ -504,36 +492,19 @@ class WorkRepository(val context: Context) {
 
     private fun parseMarkdownContent(content: String): Work? {
         return try {
-            val frontMatterRegex = Regex("---\\s*\\n([\\s\\S]*?)\\n---")
-            val match = frontMatterRegex.find(content)
-            if (match == null) return null
-
-            val frontMatter = match.groupValues[1]
-            val properties = frontMatter.split("\n")
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .associate { line ->
-                    val colonIndex = line.indexOf(':')
-                    if (colonIndex > 0) {
-                        val key = line.substring(0, colonIndex).trim()
-                        val value = unescapeMarkdown(line.substring(colonIndex + 1).trim())
-                        key to value
-                    } else {
-                        "" to ""
-                    }
-                }
-
-            val id = properties["id"] ?: return null
+            val header = InputLimits.frontMatter(content) ?: return null
+            val properties = parseFrontMatterProperties(header.first)
+            val id = properties["id"]?.takeIf { InputLimits.validId(it) } ?: return null
             val title = properties["title"] ?: ""
             val type = WorkType.valueOf(properties["type"] ?: "BOOK")
             val status = WorkStatus.valueOf(properties["status"] ?: "IN_PLANS")
-            val coverPath = properties["cover"]
-            val coverPaths = decodeList(properties["covers"])
-            val chapters = properties["chapters"]?.toDoubleOrNull()
-            val volumes = properties["volumes"]?.toDoubleOrNull()
-            val bookChapters = properties["bookChapters"]?.toDoubleOrNull()
-            val episodes = properties["episodes"]?.toDoubleOrNull()
-            val seasons = properties["seasons"]?.toIntOrNull()
+            val coverPath = properties["cover"]?.let { safeStoredCover(it) }
+            val coverPaths = decodeList(properties["covers"]).mapNotNull { safeStoredCover(it) }
+            val chapters = properties["chapters"]?.toDoubleOrNull()?.also { require(it.isFinite() && it in 0.0..InputLimits.MAX_UNITS.toDouble()) }
+            val volumes = properties["volumes"]?.toDoubleOrNull()?.also { require(it.isFinite() && it in 0.0..InputLimits.MAX_UNITS.toDouble()) }
+            val bookChapters = properties["bookChapters"]?.toDoubleOrNull()?.also { require(it.isFinite() && it in 0.0..InputLimits.MAX_UNITS.toDouble()) }
+            val episodes = properties["episodes"]?.toDoubleOrNull()?.also { require(it.isFinite() && it in 0.0..InputLimits.MAX_UNITS.toDouble()) }
+            val seasons = properties["seasons"]?.toIntOrNull()?.also { require(it in 0..InputLimits.MAX_UNITS) }
             val year = properties["year"]?.toIntOrNull()
             val yearPeriod = properties["yearPeriod"]
             val country = properties["country"]
@@ -564,7 +535,7 @@ class WorkRepository(val context: Context) {
             val tags = decodeList(properties["tags"])
             val updatedAt = properties["updatedAt"]?.toLongOrNull()
 
-            val bodyStart = match.range.last + 1
+            val bodyStart = header.second
             val description = content.substring(bodyStart).trim()
 
             Work(
@@ -615,7 +586,7 @@ class WorkRepository(val context: Context) {
     fun importMarkdownBackup(context: Context, uri: Uri): Boolean {
         return try {
             context.contentResolver.openInputStream(uri)?.use { input ->
-                val text = input.bufferedReader().readText()
+                val text = InputLimits.text(input)
                 val work = parseMarkdownContent(text) ?: return false
                 saveWork(work, preserveUpdatedAt = true, recordActivity = false)
             } ?: false
@@ -652,7 +623,7 @@ class WorkRepository(val context: Context) {
 
             markdownDocs.forEach { doc ->
                 try {
-                    val text = context.contentResolver.openInputStream(doc.uri)?.bufferedReader()?.use { it.readText() }
+                    val text = context.contentResolver.openInputStream(doc.uri)?.use { InputLimits.text(it) }
                     if (text.isNullOrBlank()) {
                         errors += "${doc.name} (пустой файл)"
                         return@forEach
@@ -703,7 +674,7 @@ class WorkRepository(val context: Context) {
             val destDir = File(context.filesDir, "imported_books").apply { mkdirs() }
             val destFile = File(destDir, "${UUID.randomUUID()}_$displayName")
             cr.openInputStream(uri)?.use { input ->
-                FileOutputStream(destFile).use { output -> input.copyTo(output) }
+                FileOutputStream(destFile).use { output -> InputLimits.copy(input, output, InputLimits.MAX_BOOK) }
             } ?: return BookImportResult(errorMessage = "Не удалось открыть файл: $displayName")
             if (!destFile.exists() || destFile.length() <= 0L) {
                 return BookImportResult(errorMessage = "Файл пустой или не был скопирован: $displayName")
@@ -770,10 +741,10 @@ class WorkRepository(val context: Context) {
                 }
                 if (fb2Entry == null) return null
                 val fb2Temp = File(context.cacheDir, "tmp_fb2_${UUID.randomUUID()}.fb2")
-                zip.getInputStream(fb2Entry).use { input ->
-                    FileOutputStream(fb2Temp).use { output -> input.copyTo(output) }
-                }
                 try {
+                    zip.getInputStream(fb2Entry).use { input ->
+                        FileOutputStream(fb2Temp).use { output -> InputLimits.copy(input, output, InputLimits.MAX_BOOK) }
+                    }
                     BookFormatImporter.fromFb2(fb2Temp)
                 } finally {
                     fb2Temp.delete()
@@ -907,7 +878,7 @@ class WorkRepository(val context: Context) {
             var imported = 0
             mdFiles.forEach { file ->
                 try {
-                    val text = file.readText()
+                    val text = file.inputStream().use { InputLimits.text(it) }
                     val work = parseMarkdownContent(text) ?: return@forEach
                     val hints = parseExportCoverHints(text)
                     val exportDir = exportDirs.firstOrNull { file.absolutePath.startsWith(it.absolutePath) }
@@ -967,10 +938,11 @@ class WorkRepository(val context: Context) {
     }
 
     private fun escapeMarkdown(text: String): String {
-        return text.replace("\n", "\\n").replace(":", "\\:")
+        return org.json.JSONObject.quote(text)
     }
 
     private fun unescapeMarkdown(text: String): String {
+        if (text.startsWith("\"")) return org.json.JSONTokener(text).nextValue() as String
         return text.replace("\\:", ":").replace("\\n", "\n").replace("\\\\", "\\")
     }
 
@@ -991,9 +963,8 @@ class WorkRepository(val context: Context) {
     }
 
     private fun parseExportCoverHints(content: String): ExportCoverHints {
-        val frontMatterRegex = Regex("---\\s*\\n([\\s\\S]*?)\\n---")
-        val match = frontMatterRegex.find(content) ?: return ExportCoverHints()
-        val properties = parseFrontMatterProperties(match.groupValues[1])
+        val header = InputLimits.frontMatter(content) ?: return ExportCoverHints()
+        val properties = parseFrontMatterProperties(header.first)
         return ExportCoverHints(
             exportBase = properties["exportBase"],
             exportCoverNames = decodeList(properties["exportCovers"]),
@@ -1001,19 +972,15 @@ class WorkRepository(val context: Context) {
     }
 
     private fun parseFrontMatterProperties(frontMatter: String): Map<String, String> {
-        return frontMatter.split("\n")
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .associate { line ->
-                val colonIndex = line.indexOf(':')
-                if (colonIndex > 0) {
-                    val key = line.substring(0, colonIndex).trim()
-                    val value = unescapeMarkdown(line.substring(colonIndex + 1).trim())
-                    key to value
-                } else {
-                    "" to ""
-                }
-            }
+        val result = linkedMapOf<String, String>()
+        frontMatter.lineSequence().filter { it.isNotBlank() }.forEach { line ->
+            val colon = line.indexOf(':')
+            require(colon > 0)
+            val key = line.substring(0, colon).trim()
+            require(key !in result) { "Duplicate metadata field" }
+            result[key] = unescapeMarkdown(line.substring(colon + 1).trim())
+        }
+        return result
     }
 
     private fun encodePeriods(periods: List<ReadingPeriod>): String {
@@ -1059,7 +1026,14 @@ class WorkRepository(val context: Context) {
             DocumentsContract.getTreeDocumentId(treeUri)
         )
 
-        fun walk(parentUri: Uri, relativePath: String) {
+        val pending = java.util.ArrayDeque<Triple<Uri, String, Int>>()
+        val visited = mutableSetOf<String>()
+        pending.add(Triple(rootDocumentUri, "", 0))
+        var documents = 0
+        while (pending.isNotEmpty()) {
+            val (parentUri, relativePath, depth) = pending.removeFirst()
+            require(depth <= 32) { "Directory depth limit exceeded" }
+            if (!visited.add(DocumentsContract.getDocumentId(parentUri))) continue
             val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
                 parentUri,
                 DocumentsContract.getDocumentId(parentUri)
@@ -1079,14 +1053,16 @@ class WorkRepository(val context: Context) {
                 val nameIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
                 val mimeIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
                 while (cursor.moveToNext()) {
+                    require(++documents <= 10000) { "Document limit exceeded" }
                     if (idIdx < 0 || nameIdx < 0 || mimeIdx < 0) continue
                     val docId = cursor.getString(idIdx) ?: continue
                     val name = cursor.getString(nameIdx) ?: continue
+                    require(name.length <= 255 && docId.length <= 4096) { "Invalid document metadata" }
                     val mime = cursor.getString(mimeIdx) ?: continue
                     val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
                     if (DocumentsContract.Document.MIME_TYPE_DIR == mime) {
                         val nextPath = if (relativePath.isBlank()) name else "$relativePath/$name"
-                        walk(docUri, nextPath)
+                        pending.add(Triple(docUri, nextPath, depth + 1))
                     } else {
                         result += TreeDocument(
                             uri = docUri,
@@ -1098,7 +1074,6 @@ class WorkRepository(val context: Context) {
             }
         }
 
-        walk(rootDocumentUri, "")
         return result
     }
 
@@ -1116,7 +1091,7 @@ class WorkRepository(val context: Context) {
     private fun looksLikeActivityStatisticsExport(context: Context, uri: Uri): Boolean {
         return try {
             context.contentResolver.openInputStream(uri)?.use { input ->
-                val head = input.bufferedReader().readText().take(4096)
+                val head = input.bufferedReader().let { reader -> val chars = CharArray(4096); val n = reader.read(chars); if (n < 0) "" else String(chars, 0, n) }
                 head.contains("format=${ActivityStatisticsFormat.FORMAT_VERSION}") ||
                         head.contains("[Heatmap]")
             } ?: false
@@ -1126,27 +1101,16 @@ class WorkRepository(val context: Context) {
     }
 
     private fun copyCoverFromDocument(context: Context, uri: Uri, workId: String, index: Int): String? {
-        return try {
-            val baseDir = context.getExternalFilesDir(null) ?: context.filesDir
-            val coversDir = File(baseDir, "covers").apply { mkdirs() }
-            val imageFile = File(coversDir, "${workId}_$index.jpg")
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(imageFile).use { output -> input.copyTo(output) }
-            } ?: return null
-            imageFile.absolutePath
-        } catch (_: Exception) {
-            null
-        }
+        return saveCoverToStorage(uri, workId, index)
     }
 
     private fun copyCoverFromFile(context: Context, source: File, workId: String, index: Int): String? {
         return try {
-            val baseDir = context.getExternalFilesDir(null) ?: context.filesDir
+            val baseDir = context.filesDir
             val coversDir = File(baseDir, "covers").apply { mkdirs() }
-            val imageFile = File(coversDir, "${workId}_$index.jpg")
-            FileInputStream(source).use { input ->
-                FileOutputStream(imageFile).use { output -> input.copyTo(output) }
-            }
+            val imageFile = InputLimits.destination(coversDir, workId, "_${index.coerceAtLeast(0)}.jpg")
+            val bytes = compressImageFile(source, context) ?: return null
+            imageFile.outputStream().use { it.write(bytes) }
             imageFile.absolutePath
         } catch (_: Exception) {
             null
@@ -1307,7 +1271,7 @@ class WorkRepository(val context: Context) {
                         val coverDestFile = File(coverTargetDir, coverFileName)
                         FileInputStream(coverFile).use { input ->
                             FileOutputStream(coverDestFile).use { output ->
-                                input.copyTo(output)
+                                InputLimits.copy(input, output, InputLimits.MAX_BOOK)
                             }
                         }
                         exportedCoverNames += coverFileName
@@ -1347,7 +1311,7 @@ class WorkRepository(val context: Context) {
         var totalCount = 0
 
         try {
-            val baseDir = context.getExternalFilesDir(null) ?: context.filesDir
+            val baseDir = context.filesDir
             val coversDir = File(baseDir, "covers")
 
             if (!coversDir.exists() || !coversDir.isDirectory) {
@@ -1401,7 +1365,7 @@ class WorkRepository(val context: Context) {
             BitmapFactory.decodeFile(file.absolutePath, boundsOptions)
             val origW = boundsOptions.outWidth
             val origH = boundsOptions.outHeight
-            if (origW <= 0 || origH <= 0) return false
+            if (origW <= 0 || origH <= 0 || origW.toLong() * origH > 100_000_000L) return false
 
             var inSampleSize = 1
             while ((origW / (inSampleSize * 2) >= maxWidth) || (origH / (inSampleSize * 2) >= maxHeight)) {
@@ -1466,6 +1430,8 @@ class WorkRepository(val context: Context) {
             }
             BitmapFactory.decodeFile(imageFile.absolutePath, options)
 
+            if (options.outWidth <= 0 || options.outHeight <= 0 || options.outWidth.toLong() * options.outHeight > 100_000_000L) return null
+
             // Вычисляем коэффициент масштабирования
             val scale = minOf(
                 maxWidth.toFloat() / options.outWidth,
@@ -1523,63 +1489,19 @@ class WorkRepository(val context: Context) {
         maxHeight: Int = 1024,
         quality: Int = 85
     ): ByteArray? {
+        if (uri.scheme != "content" || uri.authority.isNullOrBlank()) return null
+        val provider = context.packageManager.resolveContentProvider(uri.authority!!, 0) ?: return null
+        if (provider.applicationInfo?.uid == context.applicationInfo.uid) return null
+        val snapshot = File.createTempFile("cover_", ".img", context.cacheDir)
         return try {
-            val inputStream = context.contentResolver.openInputStream(uri) ?: return null
-
-            // Загружаем изображение с уменьшенным разрешением для экономии памяти
-            val options = BitmapFactory.Options().apply {
-                inJustDecodeBounds = true
-            }
-            BitmapFactory.decodeStream(inputStream, null, options)
-            inputStream.close()
-
-            // Вычисляем коэффициент масштабирования
-            val scale = minOf(
-                maxWidth.toFloat() / options.outWidth,
-                maxHeight.toFloat() / options.outHeight
-            ).coerceAtMost(1f)
-
-            // Загружаем изображение с нужным масштабом
-            val scaledOptions = BitmapFactory.Options().apply {
-                inSampleSize = if (scale < 1f) {
-                    var sampleSize = (1f / scale).toInt()
-                    // Округляем до ближайшей степени двойки (требование Android)
-                    var rounded = 1
-                    while (rounded * 2 <= sampleSize) {
-                        rounded *= 2
-                    }
-                    rounded
-                } else {
-                    1
-                }
-            }
-
-            val inputStream2 = context.contentResolver.openInputStream(uri) ?: return null
-            var bitmap = BitmapFactory.decodeStream(inputStream2, null, scaledOptions)
-            inputStream2.close()
-
-            if (bitmap == null) return null
-
-            // Дополнительное масштабирование, если нужно
-            if (bitmap.width > maxWidth || bitmap.height > maxHeight) {
-                val width = bitmap.width
-                val height = bitmap.height
-                val ratio = minOf(maxWidth.toFloat() / width, maxHeight.toFloat() / height)
-                val newWidth = (width * ratio).toInt()
-                val newHeight = (height * ratio).toInt()
-
-                bitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
-            }
-
-            // Сжимаем в JPEG
-            val outputStream = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream)
-            bitmap.recycle()
-
-            outputStream.toByteArray()
-        } catch (e: Exception) {
-            e.printStackTrace()
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                snapshot.outputStream().use { InputLimits.copy(input, it, InputLimits.MAX_IMAGE) }
+            } ?: return null
+            compressImageFile(snapshot, context, maxWidth, maxHeight, quality)
+        } catch (_: Exception) {
             null
+        } finally {
+            snapshot.delete()
         }
     }
 

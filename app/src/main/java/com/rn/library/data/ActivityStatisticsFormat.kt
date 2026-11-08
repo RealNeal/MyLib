@@ -77,6 +77,7 @@ object ActivityStatisticsFormat {
     }
 
     fun parseImportText(text: String): List<ActivityDeltaEvent> {
+        require(text.length <= InputLimits.MAX_TEXT && text.count { it == '\n' } < InputLimits.MAX_EVENTS) { "Statistics limit exceeded" }
         if (!text.contains("format=$FORMAT_VERSION") && !text.contains(SECTION_HEATMAP)) {
             return parseLegacyPipeFormat(text)
         }

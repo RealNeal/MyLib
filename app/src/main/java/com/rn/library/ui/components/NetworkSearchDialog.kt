@@ -69,6 +69,7 @@ fun NetworkSearchDialog(
         }
     }
 
+    var kinopoiskKey by remember { mutableStateOf(com.rn.library.parser.KinopoiskClient.apiKey) }
     var query by remember { mutableStateOf(initialQuery) }
     var selectedCategory by remember {
         mutableStateOf(initialSource.categories.firstOrNull() ?: SourceCategory.RANOBE)
@@ -195,10 +196,8 @@ fun NetworkSearchDialog(
 
     Dialog(
         onDismissRequest = {
-            if (!isImportingDetails) {
-                NetworkParserManager.clearCache(context)
-                onDismiss()
-            }
+            NetworkParserManager.clearCache(context)
+            onDismiss()
         },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
@@ -241,7 +240,7 @@ fun NetworkSearchDialog(
                             NetworkParserManager.clearCache(context)
                             onDismiss()
                         },
-                        enabled = !isImportingDetails
+                        enabled = true
                     ) {
                         Icon(Icons.Default.Close, contentDescription = null)
                     }
@@ -249,6 +248,16 @@ fun NetworkSearchDialog(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
+                if (currentSource == MediaSource.KINOPOISK) {
+                    OutlinedTextField(
+                        value = kinopoiskKey,
+                        onValueChange = { kinopoiskKey = it.trim(); com.rn.library.parser.KinopoiskClient.apiKey = kinopoiskKey },
+                        label = { Text("Личный API-ключ Кинопоиска") },
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
                 // Category Selection (Ранобэ, Манга, Аниме, Фильмы)
                 Row(
                     modifier = Modifier

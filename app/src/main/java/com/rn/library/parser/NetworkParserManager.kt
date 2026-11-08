@@ -93,8 +93,9 @@ object NetworkParserManager {
         val client = CatalogSourceRegistry.get(actualSource)
             ?: return Result.failure(IllegalArgumentException("Источник не поддерживается: $actualSource"))
 
-        if (client.isUrlMatching(trimmed)) {
-            val rawTargetId = client.extractTargetId(trimmed) ?: trimmed
+        if (trimmed.startsWith("http", ignoreCase = true)) {
+            if (CatalogSourceRegistry.findByUrl(trimmed)?.source != actualSource) return Result.failure(IllegalArgumentException("Недопустимый URL"))
+            val rawTargetId = client.extractTargetId(trimmed) ?: return Result.failure(IllegalArgumentException("Некорректная ссылка"))
             val detailRes = client.fetchDetails(rawTargetId)
             if (detailRes.isSuccess) {
                 val meta = detailRes.getOrThrow()
@@ -225,22 +226,18 @@ object NetworkParserManager {
             }
         }
 
-        val mainTitle = primary.title
+        val mainTitle = primary.title.take(512)
         addQuery(mainTitle)
-        val withoutParens = mainTitle.replace(Regex("""\([^)]*\)|\[[^\]]*\]"""), "").trim()
-        if (withoutParens.isNotBlank() && withoutParens != mainTitle) {
-            addQuery(withoutParens)
-        }
-        val parensMatch = Regex("""\(([^)]+)\)|\[([^\]]+)\]""").find(mainTitle)
-        val inParens = (parensMatch?.groupValues?.get(1)?.ifBlank { null }
-            ?: parensMatch?.groupValues?.get(2))?.trim()
+        val (withoutParens, inParens) = com.rn.library.data.InputLimits.titleParts(mainTitle)
+        if (withoutParens.isNotBlank() && withoutParens != mainTitle) addQuery(withoutParens)
         if (!inParens.isNullOrBlank() && inParens.length >= 3) {
             addQuery(inParens)
         }
 
-        for (alt in primary.alternativeTitles) {
+        for (rawAlt in primary.alternativeTitles.take(20)) {
+            val alt = rawAlt.take(512)
             addQuery(alt)
-            val altWithoutParens = alt.replace(Regex("""\([^)]*\)|\[[^\]]*\]"""), "").trim()
+            val altWithoutParens = com.rn.library.data.InputLimits.titleParts(alt).first
             if (altWithoutParens.isNotBlank() && altWithoutParens != alt) {
                 addQuery(altWithoutParens)
             }

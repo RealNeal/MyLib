@@ -11,7 +11,8 @@ import java.net.URLEncoder
 
 object KinopoiskClient {
     private const val API_BASE = "https://kinopoiskapiunofficial.tech/api"
-    private const val API_KEY = "e30ffed0-76ab-4dd6-b41f-4c9da2b2735b"
+    // User supplied for this application session; never bundled in the APK.
+    var apiKey: String = ""
     private const val USER_AGENT = "MyLibraryApp/2.7 (Android; github.com/RealNeal/MyLib)"
 
     fun isKinopoiskUrl(url: String): Boolean {
@@ -142,7 +143,8 @@ object KinopoiskClient {
         return try {
             conn.setRequestProperty("User-Agent", USER_AGENT)
             conn.setRequestProperty("Accept", "application/json")
-            conn.setRequestProperty("X-API-KEY", API_KEY)
+            require(apiKey.isNotBlank()) { "Введите личный API-ключ Кинопоиска в окне поиска" }
+            conn.setRequestProperty("X-API-KEY", apiKey)
             conn.connectTimeout = 12000
             conn.readTimeout = 15000
             if (conn.responseCode !in 200..299) return null

@@ -14,19 +14,11 @@ object BookFormatImporter {
 
     fun fromFb2(file: File): BookImportPreview? {
         return runCatching {
-            val text = file.readText(Charsets.UTF_8)
-            val title = Regex("<book-title>\\s*([^<]+)\\s*</book-title>", RegexOption.IGNORE_CASE)
-                .find(text)?.groupValues?.getOrNull(1)?.trim().orEmpty()
-                .takeIf { it.isNotBlank() } ?: return null
-
-            val annotationRaw = Regex("<annotation>([\\s\\S]*?)</annotation>", RegexOption.IGNORE_CASE)
-                .find(text)?.groupValues?.getOrNull(1).orEmpty()
-
-            val desc = stripXmlToPlain(annotationRaw).take(4000)
-            val firstName = Regex("<first-name>\\s*([^<]+)\\s*</first-name>", RegexOption.IGNORE_CASE)
-                .find(text)?.groupValues?.getOrNull(1)?.trim()
-            val lastName = Regex("<last-name>\\s*([^<]+)\\s*</last-name>", RegexOption.IGNORE_CASE)
-                .find(text)?.groupValues?.getOrNull(1)?.trim()
+            val text = file.inputStream().use { InputLimits.text(it, InputLimits.MAX_BOOK) }
+            val title = element(text, "book-title")?.trim()?.takeIf { it.isNotBlank() } ?: return null
+            val desc = stripXmlToPlain(element(text, "annotation").orEmpty()).take(4000)
+            val firstName = element(text, "first-name")?.trim()
+            val lastName = element(text, "last-name")?.trim()
             val author = listOfNotNull(firstName, lastName).filter { it.isNotBlank() }.joinToString(" ").ifBlank { null }
             BookImportPreview(title = title, description = desc, author = author)
         }.getOrNull()
@@ -36,24 +28,18 @@ object BookFormatImporter {
         return runCatching {
             ZipFile(file).use { zip ->
                 val containerEntry = zip.getEntry("META-INF/container.xml") ?: return null
-                val containerXml = zip.getInputStream(containerEntry).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val containerXml = zip.getInputStream(containerEntry).use { InputLimits.text(it, 512 * 1024) }
                 val opfPath = Regex("full-path\\s*=\\s*\"([^\"]+)\"", RegexOption.IGNORE_CASE)
                     .find(containerXml)?.groupValues?.getOrNull(1)?.trim()
                     ?.trimStart('/') ?: return null
 
                 val opfEntry = zip.getEntry(opfPath) ?: return null
-                val opf = zip.getInputStream(opfEntry).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val opf = zip.getInputStream(opfEntry).use { InputLimits.text(it, 512 * 1024) }
 
-                val title =
-                    Regex("<dc:title[^>]*>([^<]+)</dc:title>", RegexOption.IGNORE_CASE).find(opf)?.groupValues?.getOrNull(1)?.trim()
-                        ?: Regex("<title>\\s*([^<]+)\\s*</title>", RegexOption.IGNORE_CASE).find(opf)?.groupValues?.getOrNull(1)?.trim()
-                        ?: file.nameWithoutExtension
-
-                val descRaw =
-                    Regex("<dc:description[^>]*>([\\s\\S]*?)</dc:description>", RegexOption.IGNORE_CASE).find(opf)?.groupValues?.getOrNull(1).orEmpty()
-
-                val author =
-                    Regex("<dc:creator[^>]*>([^<]+)</dc:creator>", RegexOption.IGNORE_CASE).find(opf)?.groupValues?.getOrNull(1)?.trim()?.ifBlank { null }
+                val title = element(opf, "dc:title")?.trim()
+                    ?: element(opf, "title")?.trim() ?: file.nameWithoutExtension
+                val descRaw = element(opf, "dc:description").orEmpty()
+                val author = element(opf, "dc:creator")?.trim()?.ifBlank { null }
 
                 BookImportPreview(title = title, description = stripXmlToPlain(descRaw).take(4000), author = author)
             }
@@ -71,9 +57,26 @@ object BookFormatImporter {
         }.getOrNull()
     }
 
+    // A fixed number of index scans avoids regex backtracking on malformed XML.
+    private fun element(text: String, name: String): String? {
+        val open = "<$name"
+        var start = text.indexOf(open, ignoreCase = true)
+        while (start >= 0) {
+            val boundary = start + open.length
+            if (boundary < text.length && (text[boundary] == '>' || text[boundary].isWhitespace())) {
+                val valueStart = text.indexOf('>', boundary)
+                if (valueStart < 0) return null
+                val end = text.indexOf("</$name>", valueStart + 1, ignoreCase = true)
+                return if (end < 0) null else text.substring(valueStart + 1, end)
+            }
+            start = text.indexOf(open, boundary, ignoreCase = true)
+        }
+        return null
+    }
+
     private fun stripXmlToPlain(raw: String): String {
         return raw
-            .replace(Regex("<[^>]+>"), " ")
+             .let { InputLimits.stripTags(it) }
             .replace(Regex("\\s+"), " ")
             .trim()
     }

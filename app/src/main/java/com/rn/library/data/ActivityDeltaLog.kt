@@ -114,9 +114,18 @@ class ActivityDeltaLog(context: Context) {
 
     fun mergeEvents(newEvents: List<ActivityDeltaEvent>) {
         if (newEvents.isEmpty()) return
-        val events = loadEvents().toMutableList()
-        newEvents.forEach { mergeInto(events, it) }
-        persistEvents(events)
+        require(newEvents.size <= InputLimits.MAX_EVENTS)
+        val events = linkedMapOf<Pair<LocalDate, String>, ActivityDeltaEvent>()
+        for (event in loadEvents() + newEvents) {
+            val key = event.date to event.workId
+            val previous = events[key]
+            val merged = event.copy(readDelta = event.readDelta + (previous?.readDelta ?: 0.0),
+                watchDelta = event.watchDelta + (previous?.watchDelta ?: 0.0))
+            if (merged.readDelta == 0.0 && merged.watchDelta == 0.0) events.remove(key)
+            else events[key] = merged
+        }
+        require(events.size <= InputLimits.MAX_EVENTS)
+        persistEvents(events.values.toList())
     }
 
     fun replaceAllEvents(events: List<ActivityDeltaEvent>) {
@@ -154,7 +163,7 @@ class ActivityDeltaLog(context: Context) {
 
     fun importFromFile(file: File): Int {
         if (!file.exists() || !file.isFile) return 0
-        val text = file.readText()
+        val text = file.inputStream().use { InputLimits.text(it) }
         val events = ActivityStatisticsFormat.parseImportText(text)
         if (text.contains("format=${ActivityStatisticsFormat.FORMAT_VERSION}") ||
             text.contains("[Heatmap]")

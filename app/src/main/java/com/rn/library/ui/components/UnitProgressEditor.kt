@@ -261,7 +261,7 @@ private fun unitPrefixLabel(type: WorkType): String = when (type) {
 }
 
 fun buildDefaultUnits(count: Int, prefix: String): List<UnitProgress> =
-    (1..count).map { index -> UnitProgress(unitName = "$prefix $index", completed = 0.0, total = null) }
+    (1..count.coerceIn(0, com.rn.library.data.InputLimits.MAX_UNITS)).map { index -> UnitProgress(unitName = "$prefix $index", completed = 0.0, total = null) }
 
 private fun formatUnitNumber(value: Double): String =
     if (value % 1.0 == 0.0) value.toInt().toString() else value.toString().trimEnd('0').trimEnd('.')

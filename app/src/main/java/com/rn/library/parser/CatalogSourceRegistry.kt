@@ -8,6 +8,14 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object CatalogSourceRegistry {
 
+    private val approvedHosts = setOf(
+        "shikimori.one", "shikimori.me", "shikimori.io", "mangadex.org", "anilist.co", "myanimelist.net",
+        "remanga.org", "mangalib.me", "mangalib.org", "mangalib.net", "manga.lib.social", "ranobelib.me", "ranobe.lib.social",
+        "animelib.me", "anime.lib.social", "anilib.me", "anixart.tv", "anixart.app", "anixsekai.com", "anixmirai.com",
+        "aniliberty.top", "aniliberty.me", "aniliberty.app", "anilibria.top", "anilibria.tv", "ranobehub.org",
+        "tl.rulate.ru", "rulate.ru", "wtr-lab.com", "kinopoisk.ru", "imdb.com", "royalroad.com", "ranobes.net",
+        "ranobes.com", "scribblehub.com", "mangabuff.ru", "animetka.com"
+    )
     private val sources = ConcurrentHashMap<MediaSource, ICatalogSource>()
 
     init {
@@ -25,7 +33,12 @@ object CatalogSourceRegistry {
         if (!trimmed.startsWith("http://", ignoreCase = true) && !trimmed.startsWith("https://", ignoreCase = true)) {
             return null
         }
-        return sources.values.firstOrNull { it.isUrlMatching(trimmed) }
+        if (!com.rn.library.data.InputLimits.webUrl(trimmed)) return null
+        val uri = java.net.URI(trimmed)
+        val host = uri.host.lowercase().removePrefix("www.")
+        if (host !in approvedHosts) return null
+        val canonical = "${uri.scheme}://$host${uri.rawPath.orEmpty()}"
+        return sources.values.firstOrNull { it.isUrlMatching(canonical) && it.extractTargetId(canonical) != null }
     }
 
     fun all(): List<ICatalogSource> = sources.values.toList()
@@ -232,7 +245,7 @@ object CatalogSourceRegistry {
         register(object : ICatalogSource {
             override val source = MediaSource.RANOBES
             override fun isUrlMatching(url: String) = RanobesClient.isRanobesUrl(url)
-            override fun extractTargetId(url: String) = RanobesClient.parseRanobesNovelId(url)?.toString() ?: url
+            override fun extractTargetId(url: String) = RanobesClient.parseRanobesNovelId(url)?.toString()
             override suspend fun search(query: String, filter: ShikimoriFilterType) = RanobesClient.search(query)
             override suspend fun fetchDetails(targetId: String) = RanobesClient.fetchDetails(targetId)
         })
@@ -255,7 +268,7 @@ object CatalogSourceRegistry {
         register(object : ICatalogSource {
             override val source = MediaSource.MANGABUFF
             override fun isUrlMatching(url: String) = MangaBuffClient.isMangaBuffUrl(url)
-            override fun extractTargetId(url: String) = MangaBuffClient.parseMangaBuffSlug(url) ?: url
+            override fun extractTargetId(url: String) = MangaBuffClient.parseMangaBuffSlug(url)
             override suspend fun search(query: String, filter: ShikimoriFilterType) = MangaBuffClient.search(query)
             override suspend fun fetchDetails(targetId: String) = MangaBuffClient.fetchDetails(targetId)
         })

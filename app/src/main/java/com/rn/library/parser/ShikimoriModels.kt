@@ -60,7 +60,7 @@ object ParserUtils {
     fun cleanDescription(raw: String): String {
         if (raw.isBlank()) return ""
 
-        var text = raw
+        var text = raw.take(65536)
 
         // Decode common HTML entities
         text = text.replace("&nbsp;", " ")
@@ -100,7 +100,7 @@ object ParserUtils {
             .replace(Regex("""(?i)</p>"""), "\n\n")
 
         // Strip remaining HTML tags
-        text = text.replace(Regex("""<[^>]+>"""), "")
+        text = com.rn.library.data.InputLimits.stripTags(text)
 
         // Strip BBCode like [b], [/b], [i], [spoiler], [url=...], etc.
         text = text.replace(Regex("""\[/?[a-zA-Z0-9_\-]+(=[^\]]+)?\]"""), "")

@@ -139,9 +139,9 @@ object CloudflareBypasser {
 
             val code = conn.responseCode
             val rawText = if (code in 200..299) {
-                conn.inputStream.bufferedReader().use { it.readText() }
+                conn.inputStream.use { com.rn.library.data.InputLimits.text(it) }
             } else {
-                conn.errorStream?.bufferedReader()?.use { it.readText() }
+                conn.errorStream?.use { com.rn.library.data.InputLimits.text(it) }
             }
 
             if (rawText != null) {
@@ -201,24 +201,11 @@ object CloudflareBypasser {
                             (webView.parent as? ViewGroup)?.removeView(webView)
                             webView.destroy()
                         } catch (_: Exception) {}
-                        continuation.resume(result)
+                        if (continuation.isActive) continuation.resume(result)
                     }
                 }
 
-                val timeoutRunnable = Runnable {
-                    try {
-                        webView.evaluateJavascript("document.documentElement.outerHTML") { htmlRaw ->
-                            val html = parseJsString(htmlRaw)
-                            if (html.isNotBlank() && !isCloudflareChallenge(html)) {
-                                finish(html)
-                            } else {
-                                finish(null)
-                            }
-                        }
-                    } catch (_: Exception) {
-                        finish(null)
-                    }
-                }
+                val timeoutRunnable = Runnable { finish(null) }
                 handler.postDelayed(timeoutRunnable, timeoutMs)
 
                 // Если через 2.5 сек защита требует ввода капчи — показываем диалог поверх экрана
@@ -355,7 +342,7 @@ object CloudflareBypasser {
                     }
 
                     continuation.invokeOnCancellation {
-                        finish(null)
+                        handler.post { finish(null) }
                     }
 
                     webView.loadUrl(urlStr)

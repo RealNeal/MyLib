@@ -1,6 +1,7 @@
 package com.rn.library.ui.components
 
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -45,7 +46,9 @@ import com.rn.library.ui.theme.AppButtonColor
 import com.rn.library.ui.theme.FieldHighlightColor
 import com.rn.library.ui.theme.IconTextColor
 import com.rn.library.ui.theme.ParserIconColor
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -63,8 +66,19 @@ fun NetworkSearchDialog(
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
 
+    var dialogClosed by remember { mutableStateOf(false) }
+    fun closeDialog() {
+        if (dialogClosed) return
+        dialogClosed = true
+        coroutineScope.cancel()
+        NetworkParserManager.clearCache(context)
+        onDismiss()
+    }
+    BackHandler { closeDialog() }
     DisposableEffect(Unit) {
         onDispose {
+            dialogClosed = true
+            coroutineScope.cancel()
             NetworkParserManager.clearCache(context)
         }
     }
@@ -103,6 +117,7 @@ fun NetworkSearchDialog(
         errorMessage = null
         coroutineScope.launch {
             val searchRes = NetworkParserManager.search(urlStr, detected, currentFilter)
+            var failure = searchRes.exceptionOrNull()
             if (searchRes.isSuccess && searchRes.getOrThrow().isNotEmpty()) {
                 val firstItem = searchRes.getOrThrow().first()
                 val detailsRes = NetworkParserManager.fetchDetails(firstItem)
@@ -121,13 +136,16 @@ fun NetworkSearchDialog(
                     } else null
                     isImportingDetails = false
                     NetworkParserManager.clearCache(context)
-                    onWorkSelected(metadata, localPath)
-                    onDismiss()
+                    if (!dialogClosed && coroutineContext.isActive) {
+                        onWorkSelected(metadata, localPath)
+                        closeDialog()
+                    }
                     return@launch
                 }
+                failure = detailsRes.exceptionOrNull()
             }
             isImportingDetails = false
-            errorMessage = context.getString(R.string.network_link_load_failed)
+            errorMessage = failure?.localizedMessage ?: context.getString(R.string.network_link_load_failed)
         }
     }
 
@@ -156,7 +174,7 @@ fun NetworkSearchDialog(
     }
 
     // Dynamic search with debounce
-    LaunchedEffect(query, currentSource, currentFilter) {
+    LaunchedEffect(query, currentSource, currentFilter, if (currentSource == MediaSource.KINOPOISK) kinopoiskKey else "") {
         val trimmed = query.trim()
         if (trimmed.isBlank()) {
             searchResults = emptyList()
@@ -195,10 +213,7 @@ fun NetworkSearchDialog(
     }
 
     Dialog(
-        onDismissRequest = {
-            NetworkParserManager.clearCache(context)
-            onDismiss()
-        },
+        onDismissRequest = { closeDialog() },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Card(
@@ -236,11 +251,7 @@ fun NetworkSearchDialog(
                         )
                     }
                     IconButton(
-                        onClick = {
-                            NetworkParserManager.clearCache(context)
-                            onDismiss()
-                        },
-                        enabled = true
+                        onClick = { closeDialog() }
                     ) {
                         Icon(Icons.Default.Close, contentDescription = null)
                     }
@@ -252,7 +263,8 @@ fun NetworkSearchDialog(
                     OutlinedTextField(
                         value = kinopoiskKey,
                         onValueChange = { kinopoiskKey = it.trim(); com.rn.library.parser.KinopoiskClient.apiKey = kinopoiskKey },
-                        label = { Text("Личный API-ключ Кинопоиска") },
+                        label = { Text(stringResource(R.string.kinopoisk_api_key)) },
+                        supportingText = { Text(stringResource(R.string.kinopoisk_api_key_hint)) },
                         visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -672,8 +684,10 @@ fun NetworkSearchDialog(
                                                     } else null
                                                     isImportingDetails = false
                                                     NetworkParserManager.clearCache(context)
-                                                    onWorkSelected(metadata, localPath)
-                                                    onDismiss()
+                                                    if (!dialogClosed && coroutineContext.isActive) {
+                                                        onWorkSelected(metadata, localPath)
+                                                        closeDialog()
+                                                    }
                                                 } else {
                                                     isImportingDetails = false
                                                     errorMessage = result.exceptionOrNull()?.localizedMessage ?: context.getString(R.string.load_failed)

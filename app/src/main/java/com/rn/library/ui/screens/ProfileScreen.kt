@@ -192,7 +192,7 @@ fun ProfileScreen(
             archiveBusy = true
             try {
                 val ok = withContext(Dispatchers.IO) { repository.exportLibraryArchive(uri) }
-                Toast.makeText(context, if (ok) R.string.backup_saved else R.string.export_error, Toast.LENGTH_LONG).show()
+                Toast.makeText(context, if (ok) R.string.backup_saved else R.string.backup_export_error, Toast.LENGTH_LONG).show()
             } finally { archiveBusy = false }
         }
     }

@@ -1586,7 +1586,15 @@ fun LibraryScreen(
                             confirmButton = {
                                 TextButton(onClick = {
                                     migrationNotice = emptyList()
-                                    scope.launch(Dispatchers.IO) { repository.acknowledgeMigrationWarnings() }
+                                    scope.launch {
+                                        try {
+                                            withContext(Dispatchers.IO) { repository.acknowledgeMigrationWarnings() }
+                                        } catch (e: kotlinx.coroutines.CancellationException) {
+                                            throw e
+                                        } catch (_: Exception) {
+                                            Toast.makeText(context, R.string.storage_error, Toast.LENGTH_LONG).show()
+                                        }
+                                    }
                                 }) { Text(stringResource(android.R.string.ok)) }
                             }
                         )

@@ -45,20 +45,30 @@ class WorkRepository(
     private fun ensureMigrated() = synchronized(database) {
         val dao = database.libraryDao()
         if (!dao.hasState("markdown_v1")) {
+            // A temporary external-storage outage must not permanently hide its old files.
+            val external = checkNotNull(context.getExternalFilesDir(null)) { "Legacy external storage unavailable" }
+            val directories = listOf(File(external, "works"), File(context.filesDir, "works"))
+                .distinctBy { it.canonicalPath }
             database.runInTransaction {
-                checkNotNull(worksDirectory.listFiles()) { "Cannot read legacy works directory" }
-                    .filter { it.name.endsWith(".md") }
-                    .forEach { file ->
-                        // I/O failures roll back the migration; invalid individual records follow
-                        // the legacy loader's skip behavior, and remain available for recovery.
+                directories.forEachIndexed { index, directory ->
+                    if (!directory.exists()) check(directory.mkdirs() || directory.isDirectory) {
+                        "Cannot create legacy works directory"
+                    }
+                    val files = checkNotNull(directory.listFiles()) { "Cannot read legacy works directory" }
+                    files.filter { it.name.endsWith(".md") }.forEach { file ->
+                        // Keep both originals when the same ID has conflicting records.
                         val content = try {
                             file.inputStream().use { InputLimits.text(it) }
                         } catch (_: IllegalArgumentException) { null }
                         val work = content?.let { parseMarkdownContent(it) }
                             ?.takeIf { it.id == file.nameWithoutExtension }
-                        if (work == null) dao.markState(StorageState("skipped_markdown/${file.name}"))
-                        else dao.importLegacyWork(work)
+                        val existing = work?.let { dao.getWork(it.id) }
+                        if (work == null || (existing != null && existing != work)) {
+                            val name = if (index == 0) file.name else "internal/${file.name}"
+                            dao.markState(StorageState("skipped_markdown/$name"))
+                        } else if (existing == null) dao.importLegacyWork(work)
                     }
+                }
                 dao.markState(StorageState("markdown_v1"))
             }
         }
@@ -200,15 +210,11 @@ class WorkRepository(
         val orderedPaths = work.allCoverPaths()
         if (orderedPaths.isEmpty()) return work
 
-        val persistedPaths = orderedPaths.mapNotNull { path -> safeStoredCover(path) }
+        val persistedPaths = orderedPaths.mapNotNull { path -> safeStoredCover(path)?.let { path to it } }
         if (persistedPaths.isEmpty()) return work.copy(coverPath = null, coverPaths = emptyList())
 
-        val primaryIndex = work.coverPath
-            ?.let { orderedPaths.indexOf(it).takeIf { idx -> idx >= 0 } }
-            ?: 0
-        val primary = persistedPaths.getOrElse(primaryIndex) { persistedPaths.first() }
-
-        val additional = persistedPaths.filterIndexed { index, _ -> index != primaryIndex }
+        val primary = persistedPaths.firstOrNull { it.first == work.coverPath }?.second ?: persistedPaths.first().second
+        val additional = persistedPaths.map { it.second }.filter { it != primary }
         val updated = work.copy(coverPath = primary, coverPaths = additional)
         return if (updated.coverPath == work.coverPath && updated.coverPaths == work.coverPaths) work else updated
     }
@@ -946,7 +952,11 @@ class WorkRepository(
             exportDirs.forEach { exportDir ->
                 val statsFile = File(exportDir, ActivityDeltaLog.EXPORT_FILENAME)
                 if (statsFile.exists()) {
-                    importActivityStatisticsFromFile(statsFile)
+                    try {
+                        importActivityStatisticsFromFile(statsFile)
+                    } catch (_: Exception) {
+                        // A rejected statistics file must not hide successfully imported works.
+                    }
                 }
             }
             imported to mdFiles.size
@@ -983,7 +993,13 @@ class WorkRepository(
     }
 
     private fun unescapeMarkdown(text: String): String {
-        if (text.startsWith("\"")) return org.json.JSONTokener(text).nextValue() as String
+        if (text.startsWith("\"")) {
+            val decoded = runCatching {
+                val tokener = org.json.JSONTokener(text)
+                (tokener.nextValue() as? String)?.takeIf { !tokener.more() }
+            }.getOrNull()
+            if (decoded != null) return decoded
+        }
         return text.replace("\\:", ":").replace("\\n", "\n").replace("\\\\", "\\")
     }
 
@@ -1345,43 +1361,84 @@ class WorkRepository(
                 getAllWorks() to activityDeltaLog.loadEvents()
             })
         }
-        val output = checkNotNull(context.contentResolver.openOutputStream(uri, "wt"))
-        java.util.zip.ZipOutputStream(output.buffered()).use { zip ->
-            fun entry(name: String, write: () -> Unit) {
-                zip.putNextEntry(java.util.zip.ZipEntry(name))
-                write()
-                zip.closeEntry()
-            }
-            entry("manifest.json") { zip.write("{\"format\":\"MyLibrary\",\"version\":1}".toByteArray()) }
-            works.forEach { work ->
-                require(InputLimits.validId(work.id))
-                val coverFiles = org.json.JSONObject()
-                work.allCoverPaths().forEachIndexed { index, path ->
-                    val safe = safeStoredCover(path) ?: return@forEachIndexed
-                    val file = File(safe)
-                    if (!file.isFile) return@forEachIndexed
-                    val name = "${work.id}_$index.${file.extension.ifBlank { "jpg" }}"
-                    entry("covers/$name") { file.inputStream().use { InputLimits.copy(it, zip, InputLimits.MAX_IMAGE) } }
-                    coverFiles.put(path, name)
+        require(activity.size <= InputLimits.MAX_EVENTS) { "Too many activity events for a backup" }
+        val archive = File.createTempFile("library-export-", ".zip", context.cacheDir)
+        try {
+            java.util.zip.ZipOutputStream(archive.outputStream().buffered()).use { zip ->
+                fun entry(name: String, write: () -> Unit) {
+                    zip.putNextEntry(java.util.zip.ZipEntry(name))
+                    write()
+                    zip.closeEntry()
                 }
-                entry("works/${work.id}.json") {
-                    val record = org.json.JSONObject().put("work", WorkBackupCodec.encode(work)).put("coverFiles", coverFiles)
-                    zip.write(record.toString().toByteArray(Charsets.UTF_8))
+                entry("manifest.json") { zip.write("{\"format\":\"MyLibrary\",\"version\":1}".toByteArray()) }
+                works.forEach { work ->
+                    require(InputLimits.validId(work.id))
+                    val coverFiles = org.json.JSONObject()
+                    work.allCoverPaths().forEachIndexed { index, path ->
+                        val safe = safeStoredCover(path) ?: return@forEachIndexed
+                        val file = File(safe)
+                        if (!file.isFile) return@forEachIndexed
+                        val extension = file.extension.lowercase(Locale.ROOT).ifBlank { "jpg" }
+                        require(extension in setOf("jpg", "jpeg", "png", "webp"))
+                        require(compressImageFile(file, context) != null) { "Invalid cover image" }
+                        val name = "${work.id}_$index.$extension"
+                        entry("covers/$name") { file.inputStream().use { InputLimits.copy(it, zip, InputLimits.MAX_IMAGE) } }
+                        coverFiles.put(path, name)
+                    }
+                    entry("works/${work.id}.json") {
+                        val encodedWork = WorkBackupCodec.encode(work)
+                        WorkBackupCodec.decode(encodedWork) // Enforce the same record rules as restore.
+                        val record = org.json.JSONObject().put("work", encodedWork).put("coverFiles", coverFiles)
+                        val bytes = record.toString().toByteArray(Charsets.UTF_8)
+                        require(bytes.size <= InputLimits.MAX_TEXT) { "Work too large for a backup" }
+                        zip.write(bytes)
+                    }
+                }
+                val activityJson = org.json.JSONArray().apply {
+                    activity.forEach {
+                        require(InputLimits.validId(it.workId) || it.workId == ActivityStatisticsFormat.IMPORT_WORK_ID)
+                        require(it.readDelta.isFinite() && it.watchDelta.isFinite() && it.readDelta >= 0 && it.watchDelta >= 0)
+                        put(org.json.JSONObject().put("date", it.date.toString())
+                            .put("workId", it.workId).put("read", it.readDelta).put("watch", it.watchDelta))
+                    }
+                }
+                val activityBytes = activityJson.toString().toByteArray(Charsets.UTF_8)
+                require(activityBytes.size <= InputLimits.MAX_TEXT) { "Activity too large for a backup" }
+                entry("activity.json") { zip.write(activityBytes) }
+                entry(ActivityDeltaLog.EXPORT_FILENAME) {
+                    zip.write(ActivityStatisticsFormat.buildExportText(activity).toByteArray(Charsets.UTF_8))
                 }
             }
-            val activityJson = org.json.JSONArray().apply {
-                activity.forEach { put(org.json.JSONObject().put("date", it.date.toString())
-                    .put("workId", it.workId).put("read", it.readDelta).put("watch", it.watchDelta)) }
+            require(archive.length() <= 256L * 1024 * 1024) { "Backup too large" }
+            ZipFile(archive).use { validateArchiveEntries(it) }
+            checkNotNull(context.contentResolver.openOutputStream(uri, "wt")).use { output ->
+                archive.inputStream().use { it.copyTo(output) }
             }
-            entry("activity.json") { zip.write(activityJson.toString().toByteArray(Charsets.UTF_8)) }
-            entry(ActivityDeltaLog.EXPORT_FILENAME) {
-                zip.write(ActivityStatisticsFormat.buildExportText(activity).toByteArray(Charsets.UTF_8))
-            }
+            true
+        } finally {
+            archive.delete()
         }
-        true
     } catch (e: Exception) {
         e.printStackTrace()
         false
+    }
+
+    /** Checks the structural limits shared by backup and restore. */
+    private fun validateArchiveEntries(zip: ZipFile): List<java.util.zip.ZipEntry> {
+        require(zip.size() <= 10000) { "Too many archive entries" }
+        val entries = zip.entries().asSequence().toList()
+        require(entries.map { it.name }.toSet().size == entries.size) { "Duplicate archive entries" }
+        require(entries.all { !it.isDirectory && (it.name == "manifest.json" || it.name == "activity.json" ||
+            it.name == ActivityDeltaLog.EXPORT_FILENAME ||
+            it.name.matches(Regex("works/[0-9a-fA-F-]{36}\\.json")) ||
+            it.name.matches(Regex("covers/[0-9a-fA-F-]{36}_[0-9]+\\.(jpg|jpeg|png|webp)"))) })
+        val maxExpanded = 512L * 1024 * 1024
+        var declaredSize = 0L
+        entries.forEach {
+            require(it.size >= 0 && it.size <= maxExpanded - declaredSize)
+            declaredSize += it.size
+        }
+        return entries
     }
 
     /** Validates the complete archive before committing records. ZIP paths are never extracted. */
@@ -1398,20 +1455,9 @@ class WorkRepository(
                 archive.outputStream().use { InputLimits.copy(input, it, 256 * 1024 * 1024) }
             }
             return ZipFile(archive).use { zip ->
-                require(zip.size() <= 10000) { "Too many archive entries" }
-                val entries = zip.entries().asSequence().toList()
+                val entries = validateArchiveEntries(zip)
                 val entryNames = entries.map { it.name }.toSet()
-                require(entryNames.size == entries.size) { "Duplicate archive entries" }
-                require(entries.all { !it.isDirectory && (it.name == "manifest.json" || it.name == "activity.json" ||
-                    it.name == ActivityDeltaLog.EXPORT_FILENAME ||
-                    it.name.matches(Regex("works/[0-9a-fA-F-]{36}\\.json")) ||
-                    it.name.matches(Regex("covers/[0-9a-fA-F-]{36}_[0-9]+\\.(jpg|jpeg|png|webp)"))) })
                 val maxExpanded = 512L * 1024 * 1024
-                var declaredSize = 0L
-                entries.forEach {
-                    require(it.size >= 0 && it.size <= maxExpanded - declaredSize)
-                    declaredSize += it.size
-                }
                 var expandedSize = 0L
                 fun copyEntry(entry: java.util.zip.ZipEntry, output: java.io.OutputStream, limit: Int) {
                     val counted = object : java.io.OutputStream() {

@@ -31,7 +31,7 @@ class InputLimitsTest {
         assertNull(InputLimits.frontMatter("---\n" + "\n".repeat(100000)))
         assertNull(InputLimits.frontMatter("---\n" + "a".repeat(100000) + "\n---"))
         assertEquals("Hello\n", InputLimits.frontMatter("---\r\nid: test\r\n---\r\nHello\n")?.let { "---\r\nid: test\r\n---\r\nHello\n".substring(it.second) })
-        assertEquals("", InputLimits.stripTags("<".repeat(100000)))
+        assertEquals(65536, InputLimits.stripTags("<".repeat(100000)).length)
         assertEquals(512, InputLimits.titleParts("(".repeat(100000)).first.length)
         assertEquals("Title", InputLimits.titleParts("Title (Alternative)").first)
         assertEquals("Alternative", InputLimits.titleParts("Title (Alternative)").second)

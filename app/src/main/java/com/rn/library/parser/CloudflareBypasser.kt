@@ -18,6 +18,7 @@ import java.net.URL
 import kotlin.coroutines.resume
 
 object CloudflareBypasser {
+    private const val BOUNDED_HTML_SCRIPT = """(() => { const html = document.documentElement.outerHTML; return html.length <= 2097152 ? html : null; })()"""
     const val DEFAULT_USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
@@ -30,7 +31,11 @@ object CloudflareBypasser {
         referer: String? = null,
         timeoutMs: Long = 18000
     ): String? {
-        val directHtml = fetchDirect(urlStr, referer)
+        val directHtml = try {
+            fetchDirect(urlStr, referer)
+        } catch (_: com.rn.library.data.InputSizeLimitException) {
+            return null
+        }
         if (directHtml != null && !isCloudflareChallenge(directHtml)) {
             return directHtml
         }
@@ -166,6 +171,8 @@ object CloudflareBypasser {
                 }
             }
             null
+        } catch (e: com.rn.library.data.InputSizeLimitException) {
+            throw e
         } catch (_: Exception) {
             null
         }
@@ -205,14 +212,25 @@ object CloudflareBypasser {
                     }
                 }
 
-                val timeoutRunnable = Runnable { finish(null) }
+                val timeoutRunnable = Runnable {
+                    // Do not wait indefinitely if WebView never returns the final capture.
+                    handler.postDelayed({ finish(null) }, 1000)
+                    try {
+                        webView.evaluateJavascript(BOUNDED_HTML_SCRIPT) { htmlRaw ->
+                            val html = parseJsString(htmlRaw)
+                            finish(html.takeIf { it.isNotBlank() && !isCloudflareChallenge(it) })
+                        }
+                    } catch (_: Exception) {
+                        finish(null)
+                    }
+                }
                 handler.postDelayed(timeoutRunnable, timeoutMs)
 
                 // Если через 2.5 сек защита требует ввода капчи — показываем диалог поверх экрана
                 val showIfChallengeRunnable = Runnable {
                     if (!isFinished && activity != null && !activity.isFinishing && !activity.isDestroyed) {
                         try {
-                            webView.evaluateJavascript("document.documentElement.outerHTML") { htmlRaw ->
+                            webView.evaluateJavascript(BOUNDED_HTML_SCRIPT) { htmlRaw ->
                                 val html = parseJsString(htmlRaw)
                                 if (isCloudflareChallenge(html) && !isFinished) {
                                     val container = android.widget.LinearLayout(activity).apply {
@@ -306,7 +324,7 @@ object CloudflareBypasser {
                                             (title.contains("cloudflare") && !title.contains("novel")) ||
                                             title.contains("security check")
 
-                                    webView.evaluateJavascript("document.documentElement.outerHTML") { htmlRaw ->
+                                    webView.evaluateJavascript(BOUNDED_HTML_SCRIPT) { htmlRaw ->
                                         val html = parseJsString(htmlRaw)
                                         if (html.length > 500 && !isChallengeTitle && !isCloudflareChallenge(html)) {
                                             cookieManager.flush()

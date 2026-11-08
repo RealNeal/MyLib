@@ -62,6 +62,11 @@ object ParserUtils {
 
         var text = raw.take(65536)
 
+        // Remove markup before decoding entities, so literal < and > remain text.
+        text = text.replace(Regex("""(?i)<br\s*/?>"""), "\n")
+            .replace(Regex("""(?i)</p>"""), "\n\n")
+        text = com.rn.library.data.InputLimits.stripTags(text)
+
         // Decode common HTML entities
         text = text.replace("&nbsp;", " ")
             .replace("&quot;", "\"")
@@ -94,13 +99,6 @@ object ParserUtils {
             val code = match.groupValues[1].toIntOrNull(16)
             if (code != null && code in 32..65535) code.toChar().toString() else match.value
         }
-
-        // Replace <br> and </p> with newlines before stripping other tags
-        text = text.replace(Regex("""(?i)<br\s*/?>"""), "\n")
-            .replace(Regex("""(?i)</p>"""), "\n\n")
-
-        // Strip remaining HTML tags
-        text = com.rn.library.data.InputLimits.stripTags(text)
 
         // Strip BBCode like [b], [/b], [i], [spoiler], [url=...], etc.
         text = text.replace(Regex("""\[/?[a-zA-Z0-9_\-]+(=[^\]]+)?\]"""), "")

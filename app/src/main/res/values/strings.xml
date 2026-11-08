@@ -294,4 +294,7 @@
     <string name="backup_saved">Library backup saved</string>
     <string name="retry_storage">Retry</string>
     <string name="migration_skipped">Could not migrate %1$d files. Original files were preserved. You can import them from Profile after correcting them.</string>
+    <string name="kinopoisk_api_key">Personal Kinopoisk API key</string>
+    <string name="kinopoisk_api_key_hint">Get a key at kinopoiskapiunofficial.tech</string>
+    <string name="backup_export_error">Could not create the backup. Check the destination; a large library may exceed backup limits.</string>
 </resources>

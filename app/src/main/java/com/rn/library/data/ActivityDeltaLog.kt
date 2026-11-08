@@ -32,10 +32,7 @@ class ActivityDeltaLog(
                 event.readDelta + (previous?.readDelta ?: 0.0),
                 event.watchDelta + (previous?.watchDelta ?: 0.0))
             if (merged.readDelta == 0.0 && merged.watchDelta == 0.0) dao.deleteEvent(merged)
-            else {
-                require(previous != null || dao.eventCount() < InputLimits.MAX_EVENTS)
-                dao.saveEvents(listOf(merged))
-            }
+            else dao.saveEvents(listOf(merged))
         }
     }
 

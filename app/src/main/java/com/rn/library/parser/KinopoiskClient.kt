@@ -12,7 +12,7 @@ import java.net.URLEncoder
 object KinopoiskClient {
     private const val API_BASE = "https://kinopoiskapiunofficial.tech/api"
     // User supplied for this application session; never bundled in the APK.
-    var apiKey: String = ""
+    @Volatile var apiKey: String = ""
     private const val USER_AGENT = "MyLibraryApp/2.7 (Android; github.com/RealNeal/MyLib)"
 
     fun isKinopoiskUrl(url: String): Boolean {
@@ -138,12 +138,12 @@ object KinopoiskClient {
     }
 
     private fun fetchJson(urlString: String): JSONObject? {
+        require(apiKey.isNotBlank()) { "Введите личный API-ключ Кинопоиска в окне поиска" }
         val url = URL(urlString)
         val conn = url.openConnection() as HttpURLConnection
         return try {
             conn.setRequestProperty("User-Agent", USER_AGENT)
             conn.setRequestProperty("Accept", "application/json")
-            require(apiKey.isNotBlank()) { "Введите личный API-ключ Кинопоиска в окне поиска" }
             conn.setRequestProperty("X-API-KEY", apiKey)
             conn.connectTimeout = 12000
             conn.readTimeout = 15000

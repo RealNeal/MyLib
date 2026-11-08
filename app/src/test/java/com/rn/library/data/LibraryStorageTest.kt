@@ -223,6 +223,98 @@ class LibraryStorageTest {
         assertEquals(7.0, events.single { it.workId == other }.readDelta, 0.0)
     }
 
+    @Test fun migrationReadsBothLocationsAndRetainsConflicts() = runBlocking<Unit>(Dispatchers.IO) {
+        val externalWork = work()
+        val internalWork = work()
+        val conflict = externalWork.copy(title = "Different internal version")
+        val internal = File(context.filesDir, "works").apply { mkdirs() }
+        val internalFiles = listOf(File(internal, "${internalWork.id}.md"), File(internal, "${conflict.id}.md"))
+        try {
+            File(legacy, "${externalWork.id}.md").writeText(markdown(externalWork))
+            internalFiles[0].writeText(markdown(internalWork))
+            internalFiles[1].writeText(markdown(conflict))
+            assertEquals(setOf(externalWork, internalWork), repository.getAllWorks().toSet())
+            assertEquals(listOf("internal/${conflict.id}.md"), repository.migrationWarnings())
+            assertTrue(internalFiles[1].exists())
+        } finally { internalFiles.forEach { it.delete() } }
+    }
+
+    @Test fun unavailableExternalStorageDoesNotCommitMigrationAndCanRetry() = runBlocking<Unit>(Dispatchers.IO) {
+        val expected = work()
+        File(legacy, "${expected.id}.md").writeText(markdown(expected))
+        val unavailable = object : android.content.ContextWrapper(context) {
+            override fun getExternalFilesDir(type: String?): File? = null
+        }
+        try {
+            WorkRepository(unavailable) { database }.getAllWorks()
+            fail("Migration should wait for external storage")
+        } catch (_: IllegalStateException) { }
+        assertFalse(database.libraryDao().hasState("markdown_v1"))
+        assertEquals(listOf(expected), repository.getAllWorks())
+    }
+
+    @Test fun legacyQuotedValuesRemainCompleteAfterMigration() = runBlocking<Unit>(Dispatchers.IO) {
+        val expected = work()
+        val file = File(legacy, "${expected.id}.md")
+        file.writeText("---\nid: ${expected.id}\ntitle: \"Wolf\" and Spice\nnote: \"Unclosed note\n---\n")
+        val migrated = repository.getWorkById(expected.id)!!
+        assertEquals("\"Wolf\" and Spice", migrated.title)
+        assertEquals("\"Unclosed note", migrated.note)
+        assertTrue(file.exists())
+    }
+
+    @Test fun rejectedStatisticsDoesNotEraseImportedWorkCountOrStopLaterFiles() = runBlocking<Unit>(Dispatchers.IO) {
+        val downloads = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+        val first = File(downloads, "MyLibrary").apply { mkdirs() }
+        val second = File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "MyLibrary").apply { mkdirs() }
+        val expected = work()
+        try {
+            File(first, "${expected.id}.md").writeText(markdown(expected))
+            File(first, ActivityDeltaLog.EXPORT_FILENAME).writeText("x".repeat(InputLimits.MAX_TEXT + 1))
+            File(second, ActivityDeltaLog.EXPORT_FILENAME).writeText(
+                ActivityStatisticsFormat.buildExportText(listOf(ActivityDeltaEvent(LocalDate.of(2024, 1, 1), expected.id, 3.0, 0.0)))
+            )
+            assertEquals(1 to 1, repository.importExportedBackupsFromDownloads(context))
+            assertEquals(expected, repository.getWorkById(expected.id))
+            assertEquals(3.0, repository.loadActivityEvents().sumOf { it.readDelta }, 0.0)
+        } finally { first.deleteRecursively(); second.deleteRecursively() }
+    }
+
+    @Test fun filteredCoverDoesNotDisplaceSelectedCover() = runBlocking<Unit>(Dispatchers.IO) {
+        val missing = File(context.filesDir, "covers/missing.jpg").absolutePath
+        val first = "https://example.com/a.jpg"
+        val selected = "https://example.com/b.jpg"
+        val saved = repository.persistWorkCovers(work().copy(coverPath = selected, coverPaths = listOf(missing, first, selected)))
+        assertEquals(selected, saved.coverPath)
+        assertEquals(listOf(first), saved.coverPaths)
+    }
+
+    @Test fun activityBeyondImportLimitStillSavesProgressAndBackupFailsSafely() = runBlocking<Unit>(Dispatchers.IO) {
+        val original = work().copy(progress = 0.0, unitProgress = emptyList())
+        assertTrue(repository.saveWork(original, recordActivity = false))
+        val dao = database.libraryDao()
+        dao.markState(StorageState("activity_v1"))
+        val start = LocalDate.of(1900, 1, 1)
+        database.runInTransaction {
+            dao.saveEvents(List(InputLimits.MAX_EVENTS) { index ->
+                StoredActivityEvent(start.plusDays(index.toLong()).toString(), original.id, 1.0, 0.0)
+            })
+        }
+        assertTrue(repository.saveWork(original.copy(progress = 1.0)))
+        assertEquals(1.0, repository.getWorkById(original.id)!!.progress!!, 0.0)
+        assertEquals(InputLimits.MAX_EVENTS + 1, dao.eventCount())
+        val archive = File(context.cacheDir, "oversized.mylib").apply { writeText("existing") }
+        assertFalse(repository.exportLibraryArchive(Uri.fromFile(archive)))
+        assertEquals("existing", archive.readText())
+    }
+
+    @Test fun oversizedWorkCannotProduceUnrestorableBackup() = runBlocking<Unit>(Dispatchers.IO) {
+        assertTrue(repository.saveWork(work().copy(description = "a".repeat(InputLimits.MAX_TEXT)), recordActivity = false))
+        val archive = File(context.cacheDir, "large-work.mylib").apply { writeText("existing") }
+        assertFalse(repository.exportLibraryArchive(Uri.fromFile(archive)))
+        assertEquals("existing", archive.readText())
+    }
+
     @Test fun pickedCoversNeverOverwriteSavedFilesAfterRemovingEarlierCovers() = runBlocking<Unit>(Dispatchers.IO) {
         val id = work().id
         val directory = File(context.filesDir, "covers").apply { mkdirs() }

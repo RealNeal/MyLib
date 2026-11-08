@@ -294,4 +294,7 @@
     <string name="backup_saved">Резервная копия библиотеки сохранена</string>
     <string name="retry_storage">Повторить</string>
     <string name="migration_skipped">Не удалось перенести файлов: %1$d. Оригиналы сохранены. После исправления их можно импортировать из профиля.</string>
+    <string name="kinopoisk_api_key">Личный API-ключ Кинопоиска</string>
+    <string name="kinopoisk_api_key_hint">Получите ключ на kinopoiskapiunofficial.tech</string>
+    <string name="backup_export_error">Не удалось создать копию. Проверьте место сохранения: большая библиотека может превышать лимиты резервной копии.</string>
 </resources>

@@ -99,6 +99,12 @@ import com.rn.library.util.WindowWidthClass
 import com.rn.library.util.rememberWindowSizeInfo
 import com.rn.library.ui.theme.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import android.widget.Toast
 import java.io.File
 
 // Порядок сортировки списка произведений
@@ -561,19 +567,31 @@ fun LibraryScreen(
 
     val scope = rememberCoroutineScope()
 
+    val saveMutex = remember { Mutex() }
+    var storageAttempt by remember { mutableStateOf(0) }
+    var storageFailure by remember { mutableStateOf<String?>(null) }
+    var storageLoading by remember { mutableStateOf(true) }
+    var migrationNotice by remember { mutableStateOf<List<String>>(emptyList()) }
+
     fun commitWorkSave(
         work: Work,
         previous: Work?,
         recordActivity: Boolean,
         onAfterSave: (Work) -> Unit
     ) {
-        repository.saveWork(work, recordActivity = recordActivity)
-        works = repository.getAllWorks()
-        onAfterSave(work)
+        scope.launch {
+            saveMutex.withLock {
+                val saved = withContext(Dispatchers.IO) {
+                    if (repository.saveWork(work, recordActivity = recordActivity)) repository.getWorkById(work.id) else null
+                }
+                if (saved != null) onAfterSave(saved)
+                else Toast.makeText(context, R.string.storage_error, Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     fun requestSaveWork(work: Work, previous: Work?, onAfterSave: (Work) -> Unit) {
-        val resolvedPrevious = previous ?: repository.getWorkById(work.id)
+        val resolvedPrevious = previous ?: works.firstOrNull { it.id == work.id }
         if (repository.shouldConfirmLargeActivityDelta(resolvedPrevious, work)) {
             pendingWorkSave = PendingWorkSave(work, resolvedPrevious, onAfterSave)
             showActivityStatsConfirm = true
@@ -602,8 +620,6 @@ fun LibraryScreen(
         when {
             showGenreTagScreen -> {
                 showGenreTagScreen = false
-                works = repository.getAllWorks()
-                selectedWork = selectedWork?.id?.let { repository.getWorkById(it) }
             }
             showAddWorkScreen -> {
                 // Если редактировали существующее произведение, возвращаемся к экрану просмотра
@@ -617,9 +633,29 @@ fun LibraryScreen(
         }
     }
 
-    // Подгружаем каталог при старте и при каждой смене вкладки (после импорта с Профиля список не «залипает»).
-    LaunchedEffect(selectedItem) {
-        works = repository.getAllWorks()
+    // Room notifies this screen after saves and imports; tab switches do not reload storage.
+    LaunchedEffect(repository, storageAttempt) {
+        storageLoading = true
+        var warningsChecked = false
+        repository.observeWorks().catch { error ->
+            storageLoading = false
+            storageFailure = context.getString(R.string.storage_error) + "\n" + error.message.orEmpty()
+        }.collect { updated ->
+            storageLoading = false
+            if (!warningsChecked) {
+                migrationNotice = try {
+                    withContext(Dispatchers.IO) { repository.migrationWarnings() }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    storageFailure = context.getString(R.string.storage_error) + "\n" + e.message.orEmpty()
+                    migrationNotice
+                }
+                warningsChecked = true
+            }
+            works = updated
+            selectedWork = selectedWork?.id?.let { id -> updated.firstOrNull { it.id == id } }
+        }
     }
 
     // При заходе в приложение — случайная обложка; при >2 не повторяем предыдущую.
@@ -990,11 +1026,12 @@ fun LibraryScreen(
                                     confirmButton = {
                                         TextButton(
                                             onClick = {
-                                                if (repository.deleteWork(w.id)) {
-                                                    works = repository.getAllWorks()
-                                                    if (selectedWork?.id == w.id) selectedWork =
-                                                        null
-                                                    workToDelete = null
+                                                scope.launch {
+                                                    val deleted = withContext(Dispatchers.IO) { repository.deleteWork(w.id) }
+                                                    if (deleted) {
+                                                        if (selectedWork?.id == w.id) selectedWork = null
+                                                        workToDelete = null
+                                                    } else Toast.makeText(context, R.string.storage_error, Toast.LENGTH_LONG).show()
                                                 }
                                             },
                                             colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
@@ -1487,12 +1524,8 @@ fun LibraryScreen(
                             GenreTagSettingsScreen(
                                 onBack = {
                                     showGenreTagScreen = false
-                                    works = repository.getAllWorks()
-                                    selectedWork = selectedWork?.id?.let { repository.getWorkById(it) }
                                 },
                                 onWorksUpdated = {
-                                    works = repository.getAllWorks()
-                                    selectedWork = selectedWork?.id?.let { repository.getWorkById(it) }
                                 },
                                 repository = repository
                             )
@@ -1541,6 +1574,34 @@ fun LibraryScreen(
                         }
                     }
 
+
+                    if (storageLoading) {
+                        androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    if (migrationNotice.isNotEmpty()) {
+                        AlertDialog(
+                            onDismissRequest = { migrationNotice = emptyList() },
+                            text = { Text(stringResource(R.string.migration_skipped, migrationNotice.size) +
+                                "\n" + migrationNotice.take(10).joinToString("\n")) },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    migrationNotice = emptyList()
+                                    scope.launch(Dispatchers.IO) { repository.acknowledgeMigrationWarnings() }
+                                }) { Text(stringResource(android.R.string.ok)) }
+                            }
+                        )
+                    }
+                    storageFailure?.let { message ->
+                        AlertDialog(
+                            onDismissRequest = { storageFailure = null },
+                            text = { Text(message) },
+                            confirmButton = {
+                                TextButton(onClick = { storageFailure = null; storageAttempt++ }) {
+                                    Text(stringResource(R.string.retry_storage))
+                                }
+                            }
+                        )
+                    }
 
                     if (showActivityStatsConfirm && pendingWorkSave != null) {
                         val pending = pendingWorkSave!!

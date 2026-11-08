@@ -1,22 +1,42 @@
 package com.rn.library.data
 
 import android.content.Context
-import androidx.core.content.edit
 import java.io.File
 import java.time.LocalDate
 
-/**
- * Минимальная реализация лога активности, достаточная для компиляции и базовой работы.
- * Хранит события в SharedPreferences как строки.
- */
-class ActivityDeltaLog(context: Context) {
-    private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+/** Activity and work updates share a Room transaction. Legacy preferences are kept for recovery. */
+class ActivityDeltaLog(
+    private val context: Context,
+    databaseProvider: () -> LibraryDatabase = { LibraryDatabase.get(context) }
+) {
+    private val database by lazy(databaseProvider)
 
-    fun appendEvent(event: ActivityDeltaEvent) {
+    private fun ensureMigrated() {
+        val dao = database.libraryDao()
+        if (dao.hasState("activity_v1")) return
+        database.runInTransaction {
+            val legacy = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getStringSet(KEY_EVENTS, emptySet()).orEmpty().mapNotNull { decode(it) }
+            dao.saveEvents(legacy.map { StoredActivityEvent(it.date.toString(), it.workId, it.readDelta, it.watchDelta) })
+            dao.markState(StorageState("activity_v1"))
+        }
+    }
+
+    fun appendEvent(event: ActivityDeltaEvent): Unit = synchronized(database) {
         if (event.readDelta == 0.0 && event.watchDelta == 0.0) return
-        val events = loadEvents().toMutableList()
-        mergeInto(events, event)
-        persistEvents(events)
+        ensureMigrated()
+        database.runInTransaction {
+            val dao = database.libraryDao()
+            val previous = dao.getEvent(event.date.toString(), event.workId)
+            val merged = StoredActivityEvent(event.date.toString(), event.workId,
+                event.readDelta + (previous?.readDelta ?: 0.0),
+                event.watchDelta + (previous?.watchDelta ?: 0.0))
+            if (merged.readDelta == 0.0 && merged.watchDelta == 0.0) dao.deleteEvent(merged)
+            else {
+                require(previous != null || dao.eventCount() < InputLimits.MAX_EVENTS)
+                dao.saveEvents(listOf(merged))
+            }
+        }
     }
 
     fun deductEventProgress(
@@ -24,9 +44,13 @@ class ActivityDeltaLog(context: Context) {
         readDeduct: Double,
         watchDeduct: Double,
         fallbackDate: LocalDate
-    ) {
+    ): Unit = synchronized(database) {
         if (readDeduct <= 0.0 && watchDeduct <= 0.0) return
-        val events = loadEvents().toMutableList()
+        ensureMigrated()
+        val original = database.libraryDao().getEventsForWork(workId)
+        val events = original.map {
+            ActivityDeltaEvent(LocalDate.parse(it.date), it.workId, it.readDelta, it.watchDelta)
+        }.toMutableList()
 
         if (readDeduct > 0.0) {
             var remaining = readDeduct
@@ -103,16 +127,25 @@ class ActivityDeltaLog(context: Context) {
         }
 
         val cleaned = events.filterNot { it.readDelta <= 0.0 && it.watchDelta <= 0.0 }
-        persistEvents(cleaned)
+        val updated = cleaned.map { StoredActivityEvent(it.date.toString(), it.workId, it.readDelta, it.watchDelta) }
+            .associateBy { it.date to it.workId }
+        database.runInTransaction {
+            original.forEach { previous ->
+                val next = updated[previous.date to previous.workId]
+                if (next == null) database.libraryDao().deleteEvent(previous)
+                else if (next != previous) database.libraryDao().saveEvents(listOf(next))
+            }
+        }
     }
 
-    fun loadEvents(): List<ActivityDeltaEvent> {
-        return prefs.getStringSet(KEY_EVENTS, emptySet()).orEmpty()
-            .mapNotNull { decode(it) }
-            .sortedBy { it.date }
+    fun loadEvents(): List<ActivityDeltaEvent> = synchronized(database) {
+        ensureMigrated()
+        database.libraryDao().getEvents().map {
+            ActivityDeltaEvent(LocalDate.parse(it.date), it.workId, it.readDelta, it.watchDelta)
+        }
     }
 
-    fun mergeEvents(newEvents: List<ActivityDeltaEvent>) {
+    fun mergeEvents(newEvents: List<ActivityDeltaEvent>): Unit = synchronized(database) {
         if (newEvents.isEmpty()) return
         require(newEvents.size <= InputLimits.MAX_EVENTS)
         val events = linkedMapOf<Pair<LocalDate, String>, ActivityDeltaEvent>()
@@ -128,31 +161,19 @@ class ActivityDeltaLog(context: Context) {
         persistEvents(events.values.toList())
     }
 
-    fun replaceAllEvents(events: List<ActivityDeltaEvent>) {
+    fun replaceAllEvents(events: List<ActivityDeltaEvent>): Unit = synchronized(database) {
         persistEvents(events)
     }
 
-    private fun mergeInto(events: MutableList<ActivityDeltaEvent>, event: ActivityDeltaEvent) {
-        if (event.readDelta == 0.0 && event.watchDelta == 0.0) return
-        val index = events.indexOfFirst { it.date == event.date && it.workId == event.workId }
-        if (index >= 0) {
-            val merged = events[index].copy(
-                readDelta = events[index].readDelta + event.readDelta,
-                watchDelta = events[index].watchDelta + event.watchDelta
-            )
-            if (merged.readDelta == 0.0 && merged.watchDelta == 0.0) {
-                events.removeAt(index)
-            } else {
-                events[index] = merged
-            }
-        } else {
-            events.add(event)
-        }
-    }
-
     private fun persistEvents(events: List<ActivityDeltaEvent>) {
-        val encoded = events.map { encode(it) }.toHashSet()
-        prefs.edit { putStringSet(KEY_EVENTS, encoded) }
+        require(events.size <= InputLimits.MAX_EVENTS)
+        ensureMigrated()
+        database.runInTransaction {
+            database.libraryDao().clearEvents()
+            database.libraryDao().saveEvents(events.map {
+                StoredActivityEvent(it.date.toString(), it.workId, it.readDelta, it.watchDelta)
+            })
+        }
     }
 
     fun exportToFile(file: File) {
@@ -174,9 +195,6 @@ class ActivityDeltaLog(context: Context) {
         }
         return events.size
     }
-
-    private fun encode(e: ActivityDeltaEvent): String =
-        listOf(e.date.toString(), e.workId, e.readDelta.toString(), e.watchDelta.toString()).joinToString("|")
 
     private fun decode(raw: String): ActivityDeltaEvent? {
         val parts = raw.split('|')

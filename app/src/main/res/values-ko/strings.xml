@@ -288,4 +288,10 @@
     <string name="filter_items_hint">검색…</string>
     <string name="no_items_found">항목을 찾을 수 없습니다</string>
     <string name="works_count_label">작품: %1$d개</string>
+    <string name="storage_error">라이브러리를 읽거나 저장할 수 없습니다. 원본 파일은 보존되었습니다.</string>
+    <string name="export_library_archive">라이브러리 백업 (.mylib)</string>
+    <string name="import_library_archive">라이브러리 복원 (.mylib)</string>
+    <string name="backup_saved">라이브러리 백업이 저장되었습니다</string>
+    <string name="retry_storage">다시 시도</string>
+    <string name="migration_skipped">파일 %1$d개를 이전하지 못했습니다. 원본은 보존되었습니다. 수정 후 프로필에서 가져올 수 있습니다.</string>
 </resources>

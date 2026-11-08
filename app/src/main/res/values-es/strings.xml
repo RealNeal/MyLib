@@ -288,4 +288,10 @@
     <string name="filter_items_hint">Buscar…</string>
     <string name="no_items_found">No se encontraron elementos</string>
     <string name="works_count_label">%1$d obras</string>
+    <string name="storage_error">No se pudo leer o guardar la biblioteca. Se han conservado los archivos originales.</string>
+    <string name="export_library_archive">Guardar copia de la biblioteca (.mylib)</string>
+    <string name="import_library_archive">Restaurar biblioteca (.mylib)</string>
+    <string name="backup_saved">Copia de la biblioteca guardada</string>
+    <string name="retry_storage">Reintentar</string>
+    <string name="migration_skipped">No se pudieron migrar %1$d archivos. Se conservaron los originales. Puedes importarlos desde el perfil tras corregirlos.</string>
 </resources>

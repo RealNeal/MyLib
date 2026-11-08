@@ -288,4 +288,10 @@
     <string name="filter_items_hint">Поиск…</string>
     <string name="no_items_found">Ничего не найдено</string>
     <string name="works_count_label">Произведений: %1$d</string>
+    <string name="storage_error">Не удалось прочитать или сохранить библиотеку. Исходные файлы сохранены.</string>
+    <string name="export_library_archive">Сохранить библиотеку (.mylib)</string>
+    <string name="import_library_archive">Восстановить библиотеку (.mylib)</string>
+    <string name="backup_saved">Резервная копия библиотеки сохранена</string>
+    <string name="retry_storage">Повторить</string>
+    <string name="migration_skipped">Не удалось перенести файлов: %1$d. Оригиналы сохранены. После исправления их можно импортировать из профиля.</string>
 </resources>

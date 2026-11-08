@@ -31,6 +31,10 @@ import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.scrollBy
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import androidx.compose.ui.zIndex
@@ -170,6 +174,8 @@ fun AddWorkScreen(
     )
     val context = LocalContext.current
     val repository = remember { WorkRepository(context) }
+    val scope = rememberCoroutineScope()
+    val coverMutex = remember { kotlinx.coroutines.sync.Mutex() }
     val stableWorkId = remember(work?.id) { work?.id ?: UUID.randomUUID().toString() }
 
     // Основные поля
@@ -245,17 +251,24 @@ fun AddWorkScreen(
             "Фантастика", "Фэнтези", "Школа", "Экшен"
         )
     }
-    val existingGenres = remember {
-        GenreTagTranslator.translateAndNormalizeChips(
-            repository.getAllWorks().flatMap { it.genres.orEmpty() } + defaultGenres + com.rn.library.data.GenreTagManager.getCustomGenres(context),
-            Language.RUSSIAN
-        ).sorted()
-    }
-    val existingTags = remember {
-        GenreTagTranslator.translateAndNormalizeChips(
-            repository.getAllWorks().flatMap { it.tags.orEmpty() } + com.rn.library.data.GenreTagManager.getCustomTags(context),
-            Language.RUSSIAN
-        ).sorted()
+    var existingGenres by remember { mutableStateOf(defaultGenres) }
+    var existingTags by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(repository) {
+        try {
+            val stored = withContext(Dispatchers.IO) { repository.getAllWorks() }
+            existingGenres = GenreTagTranslator.translateAndNormalizeChips(
+                stored.flatMap { it.genres } + defaultGenres + com.rn.library.data.GenreTagManager.getCustomGenres(context),
+                Language.RUSSIAN
+            ).sorted()
+            existingTags = GenreTagTranslator.translateAndNormalizeChips(
+                stored.flatMap { it.tags } + com.rn.library.data.GenreTagManager.getCustomTags(context),
+                Language.RUSSIAN
+            ).sorted()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Toast.makeText(context, R.string.storage_error, Toast.LENGTH_LONG).show()
+        }
     }
     var note by remember(work?.note) { mutableStateOf(work?.note ?: "") }
 
@@ -288,13 +301,17 @@ fun AddWorkScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let { pickedUri ->
-            val persisted = repository.persistCoverFromPicker(pickedUri, stableWorkId, coverPaths.size)
-                ?: pickedUri.toString()
-            val existingIndex = coverPaths.indexOf(persisted)
-            if (existingIndex >= 0) {
-                selectedCoverIndex = existingIndex
-            } else if (coverPaths.size < 10) {
-                coverPaths = coverPaths + persisted
+            scope.launch {
+                coverMutex.withLock {
+                    val persisted = withContext(Dispatchers.IO) { repository.persistCoverFromPicker(pickedUri, stableWorkId) }
+                        ?: pickedUri.toString()
+                    val existingIndex = coverPaths.indexOf(persisted)
+                    if (existingIndex >= 0) {
+                        selectedCoverIndex = existingIndex
+                    } else if (coverPaths.size < 10) {
+                        coverPaths = coverPaths + persisted
+                    }
+                }
             }
         }
     }

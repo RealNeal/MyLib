@@ -165,9 +165,7 @@ fun ProfileScreen(
     var activityEvents by remember { mutableStateOf<List<ActivityDeltaEvent>>(emptyList()) }
 
     LaunchedEffect(works) {
-        if (works.isNotEmpty()) {
-            localWorks = works
-        }
+        localWorks = works
     }
 
     LaunchedEffect(localWorks, activityStatsEpoch) {
@@ -186,6 +184,34 @@ fun ProfileScreen(
         showGuide = false
         showImportDialog = false
     }
+    var archiveBusy by remember { mutableStateOf(false) }
+    val exportArchiveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        if (uri != null && !archiveBusy) coroutineScope.launch {
+            archiveBusy = true
+            try {
+                val ok = withContext(Dispatchers.IO) { repository.exportLibraryArchive(uri) }
+                Toast.makeText(context, if (ok) R.string.backup_saved else R.string.export_error, Toast.LENGTH_LONG).show()
+            } finally { archiveBusy = false }
+        }
+    }
+    val importArchiveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null && !archiveBusy) coroutineScope.launch {
+            archiveBusy = true
+            try {
+                val count = withContext(Dispatchers.IO) { repository.importLibraryArchive(uri) }
+                activityStatsEpoch++
+                onWorksUpdatedState.value()
+                Toast.makeText(context, context.getString(R.string.import_backup_summary, count, count), Toast.LENGTH_LONG).show()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Toast.makeText(context, R.string.storage_error, Toast.LENGTH_LONG).show()
+            } finally { archiveBusy = false }
+        }
+    }
+
     val importBooksLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
@@ -211,7 +237,7 @@ fun ProfileScreen(
                 }
                 Triple(successCount, uris.size, failed)
             }
-            localWorks = repository.getAllWorks()
+            localWorks = withContext(Dispatchers.IO) { repository.getAllWorks() }
             onWorksUpdatedState.value()
             val msg = if (ok == 0 && failedNames.isNotEmpty()) {
                 val preview = failedNames.take(2).joinToString(", ")
@@ -254,7 +280,7 @@ fun ProfileScreen(
                     treeUri = treeUri,
                 )
             }
-            val updated = repository.getAllWorks()
+            val updated = withContext(Dispatchers.IO) { repository.getAllWorks() }
             localWorks = updated
             activityStatsEpoch++
             onWorksUpdatedState.value()
@@ -333,6 +359,30 @@ fun ProfileScreen(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(16.dp)
                 )
+            }
+
+            if (archiveBusy) {
+                androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable(enabled = !archiveBusy) {
+                    exportArchiveLauncher.launch("MyLibrary.mylib")
+                },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = profileSectionCardColor)
+            ) {
+                Text(stringResource(R.string.export_library_archive), color = profileSectionTextColor,
+                    fontSize = 18.sp, modifier = Modifier.padding(16.dp))
+            }
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable(enabled = !archiveBusy) {
+                    importArchiveLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = profileSectionCardColor)
+            ) {
+                Text(stringResource(R.string.import_library_archive), color = profileSectionTextColor,
+                    fontSize = 18.sp, modifier = Modifier.padding(16.dp))
             }
 
             // Export

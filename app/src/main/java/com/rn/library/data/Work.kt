@@ -2,6 +2,8 @@ package com.rn.library.data
 
 import java.io.File
 import java.time.LocalDate
+import androidx.room.Entity
+import androidx.room.PrimaryKey
 
 enum class WorkType {
     ANIME,
@@ -39,8 +41,9 @@ enum class AnimeSeason {
     WINTER    // Зима
 }
 
+@Entity(tableName = "works")
 data class Work(
-    val id: String,
+    @PrimaryKey val id: String,
     val title: String,
     val description: String = "",
     val type: WorkType,

@@ -20,6 +20,11 @@ import java.util.UUID
 import java.util.zip.ZipFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.distinctUntilChanged
 import com.rn.library.parser.ParserUtils
 
 data class BookImportResult(
@@ -27,8 +32,53 @@ data class BookImportResult(
     val errorMessage: String? = null
 )
 
-class WorkRepository(val context: Context) {
-    private val activityDeltaLog = ActivityDeltaLog(context)
+class WorkRepository(
+    val context: Context,
+    private val databaseProvider: () -> LibraryDatabase = { LibraryDatabase.get(context) }
+) {
+    private val database by lazy(databaseProvider)
+    private val activityDeltaLog by lazy { ActivityDeltaLog(context, databaseProvider) }
+
+    /** Called only by background storage operations. The marker and records commit together.
+     * Original Markdown files are retained as a recovery copy and never read again after success.
+     */
+    private fun ensureMigrated() = synchronized(database) {
+        val dao = database.libraryDao()
+        if (!dao.hasState("markdown_v1")) {
+            database.runInTransaction {
+                checkNotNull(worksDirectory.listFiles()) { "Cannot read legacy works directory" }
+                    .filter { it.name.endsWith(".md") }
+                    .forEach { file ->
+                        // I/O failures roll back the migration; invalid individual records follow
+                        // the legacy loader's skip behavior, and remain available for recovery.
+                        val content = try {
+                            file.inputStream().use { InputLimits.text(it) }
+                        } catch (_: IllegalArgumentException) { null }
+                        val work = content?.let { parseMarkdownContent(it) }
+                            ?.takeIf { it.id == file.nameWithoutExtension }
+                        if (work == null) dao.markState(StorageState("skipped_markdown/${file.name}"))
+                        else dao.importLegacyWork(work)
+                    }
+                dao.markState(StorageState("markdown_v1"))
+            }
+        }
+    }
+
+    fun migrationWarnings(): List<String> {
+        ensureMigrated()
+        val dao = database.libraryDao()
+        if (dao.hasState("migration_warning_seen")) return emptyList()
+        return dao.skippedLegacyFiles().map { it.removePrefix("skipped_markdown/") }
+    }
+
+    fun acknowledgeMigrationWarnings() {
+        database.libraryDao().markState(StorageState("migration_warning_seen"))
+    }
+
+    fun observeWorks(): Flow<List<Work>> = flow {
+        ensureMigrated()
+        emitAll(database.libraryDao().observeWorks().distinctUntilChanged())
+    }.flowOn(Dispatchers.IO)
 
     private data class TreeDocument(
         val uri: Uri,
@@ -47,28 +97,13 @@ class WorkRepository(val context: Context) {
         }
 
     fun getAllWorks(): List<Work> {
-        val works = mutableListOf<Work>()
-        val files = worksDirectory.listFiles { _, name -> name.endsWith(".md") }
-        files?.forEach { file ->
-            try {
-                val work = parseMarkdownFile(file)
-                work?.let { parsed ->
-                    val withCovers = persistWorkCovers(parsed)
-                    if (withCovers != parsed) {
-                        saveWork(withCovers, preserveUpdatedAt = true, recordActivity = false)
-                    }
-                    works.add(withCovers)
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-        return works
+        ensureMigrated()
+        return database.libraryDao().getAllWorks()
     }
 
     /** Копирует обложку из пикера в каталог приложения и возвращает абсолютный путь к файлу. */
-    fun persistCoverFromPicker(uri: Uri, workId: String, index: Int): String? =
-        saveCoverToStorage(uri, workId, index)
+    fun persistCoverFromPicker(uri: Uri, workId: String): String? =
+        saveCoverToStorage(uri, workId)
 
     /** Скачивает обложку по URL и сохраняет в каталог covers/, возвращая абсолютный путь. */
     suspend fun downloadCoverToStorage(imageUrl: String, workId: String, index: Int): String? =
@@ -187,11 +222,11 @@ class WorkRepository(val context: Context) {
         return path.takeIf { file.isFile && file.parentFile in allowed }
     }
 
-    private fun saveCoverToStorage(uri: Uri, workId: String, index: Int): String? {
+    private fun saveCoverToStorage(uri: Uri, workId: String): String? {
         return try {
             val baseDir = context.filesDir
             val coversDir = File(baseDir, "covers").apply { mkdirs() }
-            val outputFile = InputLimits.destination(coversDir, workId, "_${index.coerceAtLeast(0)}.jpg")
+            val outputFile = InputLimits.destination(coversDir, workId, "_${UUID.randomUUID()}.jpg")
             val compressed = compressImage(uri, context)
             if (compressed != null) {
                 FileOutputStream(outputFile).use { it.write(compressed) }
@@ -209,8 +244,9 @@ class WorkRepository(val context: Context) {
     fun loadActivityEvents(): List<ActivityDeltaEvent> = activityDeltaLog.loadEvents()
 
     fun getWorkById(workId: String): Work? {
-        val file = InputLimits.destination(worksDirectory, workId, ".md")
-        return if (file.exists()) parseMarkdownFile(file) else null
+        require(InputLimits.validId(workId)) { "Invalid work ID" }
+        ensureMigrated()
+        return database.libraryDao().getWork(workId)
     }
 
     /** Прирост единиц прогресса между сохранённым и новым состоянием произведения. */
@@ -295,18 +331,20 @@ class WorkRepository(val context: Context) {
     ): Boolean {
         return try {
             val workWithPersistedCovers = persistWorkCovers(work)
-            val file = InputLimits.destination(worksDirectory, workWithPersistedCovers.id, ".md")
-            val previous = if (file.exists()) parseMarkdownFile(file) else null
+            require(InputLimits.validId(work.id)) { "Invalid work ID" }
+            ensureMigrated()
             val now = System.currentTimeMillis()
             val workWithTimestamp = if (preserveUpdatedAt && workWithPersistedCovers.updatedAt != null) {
                 workWithPersistedCovers
             } else {
                 workWithPersistedCovers.copy(updatedAt = now)
             }
-            val content = workToMarkdown(workWithTimestamp)
-            file.writeText(content)
-            if (recordActivity) {
-                recordProgressDelta(previous, workWithTimestamp)
+            synchronized(database) {
+                database.runInTransaction {
+                    val previous = database.libraryDao().getWork(work.id)
+                    database.libraryDao().saveWork(workWithTimestamp)
+                    if (recordActivity) recordProgressDelta(previous, workWithTimestamp)
+                }
             }
             true
         } catch (e: Exception) {
@@ -353,8 +391,11 @@ class WorkRepository(val context: Context) {
 
     fun deleteWork(workId: String): Boolean {
         return try {
-            val file = InputLimits.destination(worksDirectory, workId, ".md")
-            file.delete()
+            require(InputLimits.validId(workId)) { "Invalid work ID" }
+            ensureMigrated()
+            synchronized(database) {
+                database.libraryDao().deleteWork(workId) > 0
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             false
@@ -1101,7 +1142,7 @@ class WorkRepository(val context: Context) {
     }
 
     private fun copyCoverFromDocument(context: Context, uri: Uri, workId: String, index: Int): String? {
-        return saveCoverToStorage(uri, workId, index)
+        return saveCoverToStorage(uri, workId)
     }
 
     private fun copyCoverFromFile(context: Context, source: File, workId: String, index: Int): String? {
@@ -1242,10 +1283,8 @@ class WorkRepository(val context: Context) {
             }
 
             val usedExportNames = mutableSetOf<String>()
-            val sourceFiles = worksDirectory.listFiles { _, name -> name.endsWith(".md") }
-            sourceFiles?.forEach { sourceFile ->
-                val work = parseMarkdownFile(sourceFile)
-                if (work != null) {
+            getAllWorks().forEach { work ->
+                run {
                     val targetDir = when (work.type) {
                         WorkType.BOOK -> booksDir
                         WorkType.ANIME -> animeDir
@@ -1295,6 +1334,176 @@ class WorkRepository(val context: Context) {
         } catch (e: Exception) {
             e.printStackTrace()
             null
+        }
+    }
+
+    /** Portable, versioned backup. Storage snapshots are consistent with activity updates. */
+    fun exportLibraryArchive(uri: Uri): Boolean = try {
+        ensureMigrated()
+        val (works, activity) = synchronized(database) {
+            database.runInTransaction(java.util.concurrent.Callable {
+                getAllWorks() to activityDeltaLog.loadEvents()
+            })
+        }
+        val output = checkNotNull(context.contentResolver.openOutputStream(uri, "wt"))
+        java.util.zip.ZipOutputStream(output.buffered()).use { zip ->
+            fun entry(name: String, write: () -> Unit) {
+                zip.putNextEntry(java.util.zip.ZipEntry(name))
+                write()
+                zip.closeEntry()
+            }
+            entry("manifest.json") { zip.write("{\"format\":\"MyLibrary\",\"version\":1}".toByteArray()) }
+            works.forEach { work ->
+                require(InputLimits.validId(work.id))
+                val coverFiles = org.json.JSONObject()
+                work.allCoverPaths().forEachIndexed { index, path ->
+                    val safe = safeStoredCover(path) ?: return@forEachIndexed
+                    val file = File(safe)
+                    if (!file.isFile) return@forEachIndexed
+                    val name = "${work.id}_$index.${file.extension.ifBlank { "jpg" }}"
+                    entry("covers/$name") { file.inputStream().use { InputLimits.copy(it, zip, InputLimits.MAX_IMAGE) } }
+                    coverFiles.put(path, name)
+                }
+                entry("works/${work.id}.json") {
+                    val record = org.json.JSONObject().put("work", WorkBackupCodec.encode(work)).put("coverFiles", coverFiles)
+                    zip.write(record.toString().toByteArray(Charsets.UTF_8))
+                }
+            }
+            val activityJson = org.json.JSONArray().apply {
+                activity.forEach { put(org.json.JSONObject().put("date", it.date.toString())
+                    .put("workId", it.workId).put("read", it.readDelta).put("watch", it.watchDelta)) }
+            }
+            entry("activity.json") { zip.write(activityJson.toString().toByteArray(Charsets.UTF_8)) }
+            entry(ActivityDeltaLog.EXPORT_FILENAME) {
+                zip.write(ActivityStatisticsFormat.buildExportText(activity).toByteArray(Charsets.UTF_8))
+            }
+        }
+        true
+    } catch (e: Exception) {
+        e.printStackTrace()
+        false
+    }
+
+    /** Validates the complete archive before committing records. ZIP paths are never extracted. */
+    fun importLibraryArchive(uri: Uri): Int = synchronized(ARCHIVE_IMPORT_LOCK) {
+        importArchive(uri)
+    }
+
+    private fun importArchive(uri: Uri): Int {
+        val archive = File.createTempFile("library-import-", ".zip", context.cacheDir)
+        val createdCovers = mutableListOf<File>()
+        var committed = false
+        try {
+            checkNotNull(context.contentResolver.openInputStream(uri)).use { input ->
+                archive.outputStream().use { InputLimits.copy(input, it, 256 * 1024 * 1024) }
+            }
+            return ZipFile(archive).use { zip ->
+                require(zip.size() <= 10000) { "Too many archive entries" }
+                val entries = zip.entries().asSequence().toList()
+                val entryNames = entries.map { it.name }.toSet()
+                require(entryNames.size == entries.size) { "Duplicate archive entries" }
+                require(entries.all { !it.isDirectory && (it.name == "manifest.json" || it.name == "activity.json" ||
+                    it.name == ActivityDeltaLog.EXPORT_FILENAME ||
+                    it.name.matches(Regex("works/[0-9a-fA-F-]{36}\\.json")) ||
+                    it.name.matches(Regex("covers/[0-9a-fA-F-]{36}_[0-9]+\\.(jpg|jpeg|png|webp)"))) })
+                val maxExpanded = 512L * 1024 * 1024
+                var declaredSize = 0L
+                entries.forEach {
+                    require(it.size >= 0 && it.size <= maxExpanded - declaredSize)
+                    declaredSize += it.size
+                }
+                var expandedSize = 0L
+                fun copyEntry(entry: java.util.zip.ZipEntry, output: java.io.OutputStream, limit: Int) {
+                    val counted = object : java.io.OutputStream() {
+                        override fun write(value: Int) {
+                            require(expandedSize < maxExpanded)
+                            output.write(value)
+                            expandedSize++
+                        }
+                        override fun write(bytes: ByteArray, offset: Int, length: Int) {
+                            require(length <= maxExpanded - expandedSize) { "Archive expansion limit exceeded" }
+                            output.write(bytes, offset, length)
+                            expandedSize += length
+                        }
+                    }
+                    zip.getInputStream(entry).use { InputLimits.copy(it, counted, limit) }
+                }
+                fun read(name: String): String {
+                    val bytes = ByteArrayOutputStream()
+                    copyEntry(checkNotNull(zip.getEntry(name)), bytes, InputLimits.MAX_TEXT)
+                    return bytes.toString("UTF-8")
+                }
+                val manifest = org.json.JSONObject(read("manifest.json"))
+                require(manifest.getString("format") == "MyLibrary" && manifest.getInt("version") == 1)
+                val works = entries.filter { it.name.startsWith("works/") }.map { entry ->
+                    val record = org.json.JSONObject(read(entry.name))
+                    val parsed = WorkBackupCodec.decode(record.getJSONObject("work"))
+                    require(entry.name == "works/${parsed.id}.json") { "Work identity mismatch" }
+                    val coverFiles = record.getJSONObject("coverFiles")
+                    val restoredCovers = parsed.allCoverPaths().mapNotNull { original ->
+                        if (InputLimits.webUrl(original)) return@mapNotNull original to original
+                        val name = coverFiles.optString(original).takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                        val coverEntry = checkNotNull(zip.getEntry("covers/$name")) { "Missing cover" }
+                        require(coverEntry.name in entryNames)
+                        val temporary = File.createTempFile("cover-import-", ".image", context.cacheDir)
+                        try {
+                            temporary.outputStream().use { copyEntry(coverEntry, it, InputLimits.MAX_IMAGE) }
+                            require(compressImageFile(temporary, context) != null) { "Invalid cover image" }
+                            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                            temporary.inputStream().use { input ->
+                                val buffer = ByteArray(8192)
+                                while (true) {
+                                    val count = input.read(buffer)
+                                    if (count < 0) break
+                                    digest.update(buffer, 0, count)
+                                }
+                            }
+                            val hash = digest.digest().joinToString("") { "%02x".format(it) }
+                            val coversDir = File(context.filesDir, "covers").apply { mkdirs() }
+                            val extension = name.substringAfterLast('.')
+                            val target = InputLimits.destination(coversDir, parsed.id, "_$hash.$extension")
+                            if (!target.exists()) {
+                                createdCovers += target
+                                temporary.inputStream().use { input ->
+                                    target.outputStream().use { InputLimits.copy(input, it, InputLimits.MAX_IMAGE) }
+                                }
+                            }
+                            original to target.absolutePath
+                        } finally { temporary.delete() }
+                    }.toMap()
+                    val paths = restoredCovers.values.toList()
+                    val primary = restoredCovers[parsed.coverPath] ?: paths.firstOrNull()
+                    parsed.copy(coverPath = primary, coverPaths = paths.filter { it != primary })
+                }
+                require(works.map { it.id }.distinct().size == works.size)
+                val activity = org.json.JSONArray(read("activity.json"))
+                require(activity.length() <= InputLimits.MAX_EVENTS)
+                val events = List(activity.length()) { index ->
+                    val item = activity.getJSONObject(index)
+                    val id = item.getString("workId")
+                    require(InputLimits.validId(id) || id == ActivityStatisticsFormat.IMPORT_WORK_ID)
+                    val read = item.getDouble("read")
+                    val watch = item.getDouble("watch")
+                    require(read.isFinite() && watch.isFinite() && read >= 0 && watch >= 0)
+                    ActivityDeltaEvent(LocalDate.parse(item.getString("date")), id, read, watch)
+                }
+                require(events.map { it.date to it.workId }.distinct().size == events.size)
+                ensureMigrated()
+                synchronized(database) {
+                    database.runInTransaction {
+                        works.forEach { database.libraryDao().saveWork(it) }
+                        val importedIds = works.map { it.id }.toSet() + events.map { it.workId } +
+                            ActivityStatisticsFormat.IMPORT_WORK_ID
+                        val retained = activityDeltaLog.loadEvents().filter { it.workId !in importedIds }
+                        activityDeltaLog.replaceAllEvents(retained + events)
+                    }
+                }
+                committed = true
+                works.size
+            }
+        } finally {
+            archive.delete()
+            if (!committed) createdCovers.forEach { it.delete() }
         }
     }
 
@@ -1506,6 +1715,7 @@ class WorkRepository(val context: Context) {
     }
 
     companion object {
+        private val ARCHIVE_IMPORT_LOCK = Any()
         const val LARGE_ACTIVITY_DELTA_THRESHOLD = 50
 
         fun generateId(): String = UUID.randomUUID().toString()

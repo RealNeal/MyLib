@@ -288,4 +288,10 @@
     <string name="filter_items_hint">Suchen…</string>
     <string name="no_items_found">Keine Elemente gefunden</string>
     <string name="works_count_label">%1$d Werke</string>
+    <string name="storage_error">Die Bibliothek konnte nicht gelesen oder gespeichert werden. Die Originaldateien wurden beibehalten.</string>
+    <string name="export_library_archive">Bibliothek sichern (.mylib)</string>
+    <string name="import_library_archive">Bibliothek wiederherstellen (.mylib)</string>
+    <string name="backup_saved">Bibliothekssicherung gespeichert</string>
+    <string name="retry_storage">Erneut versuchen</string>
+    <string name="migration_skipped">%1$d Dateien konnten nicht übernommen werden. Die Originale wurden beibehalten. Nach der Korrektur können sie im Profil importiert werden.</string>
 </resources>
